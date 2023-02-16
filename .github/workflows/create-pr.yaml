@@ -1,0 +1,83 @@
+---
+name: create-pr
+
+on:
+  workflow_dispatch:
+  # TODO: schedule
+
+jobs:
+  create-pr:
+    runs-on: ubuntu-latest
+
+    steps:
+
+    - name: Checkout infra-deployments
+      uses: actions/checkout@v3
+      with:
+        repository: redhat-appstudio/infra-deployments
+        ref: main
+        path: infra-deployments
+
+    - name: Checkout ec-cli
+      uses: actions/checkout@v3
+      with:
+        repository: hacbs-contract/ec-cli/
+        ref: main
+        path: ec-cli
+
+    - name: Update ec-cli
+      run: ./hack/update-infra-deployments.sh ../infra-deployments
+      working-directory: ec-cli
+
+    - name: Checkout ec-policies
+      uses: actions/checkout@v3
+      with:
+        repository: hacbs-contract/ec-policies
+        ref: main
+        path: ec-policies
+
+    - name: Update ec-policies
+      run: ./hack/update-infra-deployments.sh ../infra-deployments
+      working-directory: ec-policies
+
+    - name: Checkout enterprise-contract-controller
+      uses: actions/checkout@v3
+      with:
+        repository: hacbs-contract/enterprise-contract-controller
+        ref: main
+        path: enterprise-contract-controller
+
+    - name: Update enterprise-contract-controller
+      run: ./hack/update-infra-deployments.sh ../infra-deployments
+      working-directory: enterprise-contract-controller
+
+    - name: Display diff
+      run: git diff
+      working-directory: infra-deployments
+
+    - name: Checkout infra-deployments-ci
+      uses: actions/checkout@v3
+      with:
+        path: infra-deployments-ci
+
+    - name: Create PR in infra-deployments
+      env:
+        EC_AUTOMATION_KEY: ${{ secrets.EC_AUTOMATION_KEY }}
+        DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+        APP_INSTALL_ID: 32872589
+      run: |
+        set -o errexit
+        set -o pipefail
+        set -o nounset
+
+        function createJWT() {
+          local header=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 | sed s/\+/-/ | sed -E s/=+$//)
+          local now_utc=$(date --utc +%s)
+          local payload=$(echo -n '{"iat":'$((now_utc - 60))',"exp":'$((now_utc + 120))',"iss":245286}' | base64 | sed s/\+/-/ | sed -E s/=+$//)
+          local signature=$(echo -n "${header}.${payload}" | openssl dgst -sha256 -binary -sign <(echo "${EC_AUTOMATION_KEY}")| base64 | tr -d '\n=' | tr -- '+/' '-_')
+          echo "${header}.${payload}.${signature}"
+        }
+
+        GITHUB_TOKEN=$(curl -s -X POST -H "Authorization: Bearer $(createJWT)" -H "Accept: application/vnd.github+json" "https://api.github.com/app/installations/${APP_INSTALL_ID}/access_tokens" | jq -r .token) \
+        ./hack/create-pr.sh ../infra-deployments
+      working-directory: infra-deployments-ci
