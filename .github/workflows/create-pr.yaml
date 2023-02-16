@@ -21,7 +21,7 @@ jobs:
     - name: Checkout ec-cli
       uses: actions/checkout@v3
       with:
-        repository: hacbs-contract/ec-cli/
+        repository: hacbs-contract/ec-cli
         ref: main
         path: ec-cli
 
