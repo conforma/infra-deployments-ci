@@ -48,7 +48,7 @@ git remote add ec "${EC_REMOTE}"
 git fetch ec
 
 # Create the branch
-BRANCH_NAME=ec-policy-bundle-update
+BRANCH_NAME=ec-batch-update
 git checkout -b ${BRANCH_NAME} --track "${PR_REMOTE}/main"
 
 # commit & push
