@@ -45,7 +45,8 @@ if [ -n "${GITHUB_ACTIONS:-}" ]; then
 fi
 
 git remote add ec "${EC_REMOTE}"
-git fetch ec
+# Shallow clones prevent pushing to the remote in some cases.
+git fetch ec --unshallow
 
 # Create the branch
 BRANCH_NAME=ec-batch-update
