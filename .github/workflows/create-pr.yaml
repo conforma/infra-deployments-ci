@@ -23,7 +23,7 @@ jobs:
     - name: Checkout ec-cli
       uses: actions/checkout@v3
       with:
-        repository: hacbs-contract/ec-cli
+        repository: enterprise-contract/ec-cli
         ref: main
         path: ec-cli
 
@@ -34,7 +34,7 @@ jobs:
     - name: Checkout ec-policies
       uses: actions/checkout@v3
       with:
-        repository: hacbs-contract/ec-policies
+        repository: enterprise-contract/ec-policies
         ref: main
         path: ec-policies
 
@@ -45,7 +45,7 @@ jobs:
     - name: Checkout enterprise-contract-controller
       uses: actions/checkout@v3
       with:
-        repository: hacbs-contract/enterprise-contract-controller
+        repository: enterprise-contract/enterprise-contract-controller
         ref: main
         path: enterprise-contract-controller
 
