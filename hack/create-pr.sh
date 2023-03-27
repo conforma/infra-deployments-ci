@@ -25,7 +25,7 @@ set -o pipefail
 set -o nounset
 
 # The git repository where the local changes will be pushed to.
-EC_REMOTE="git@github.com:hacbs-contract/infra-deployments.git"
+EC_REMOTE="git@github.com:enterprise-contract/infra-deployments.git"
 
 # The name of the git remote to create the PR against.
 PR_REMOTE="${2-origin}"
