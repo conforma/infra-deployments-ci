@@ -8,7 +8,7 @@ on:
     - cron: '0 9 * * 2'
 
 jobs:
-  create-pr:
+  create-infra-deployments-pr:
     runs-on: ubuntu-latest
 
     steps:
@@ -81,5 +81,59 @@ jobs:
         }
 
         GITHUB_TOKEN=$(curl -s -X POST -H "Authorization: Bearer $(createJWT)" -H "Accept: application/vnd.github+json" "https://api.github.com/app/installations/${APP_INSTALL_ID}/access_tokens" | jq -r .token) \
-        ./hack/create-pr.sh ../infra-deployments
+        ./hack/create-pr.sh git@github.com:enterprise-contract/infra-deployments.git ../infra-deployments
+      working-directory: infra-deployments-ci
+
+  create-build-definitions-pr:
+    runs-on: ubuntu-latest
+
+    steps:
+
+    - name: Checkout build-definitions
+      uses: actions/checkout@v3
+      with:
+        repository: redhat-appstudio/build-definitions
+        ref: main
+        path: build-definitions
+
+    - name: Checkout ec-cli
+      uses: actions/checkout@v3
+      with:
+        repository: enterprise-contract/ec-cli
+        ref: main
+        path: ec-cli
+
+    - name: Update ec-cli
+      run: ./hack/update-build-definitions.sh ../build-definitions
+      working-directory: ec-cli
+
+    - name: Display diff
+      run: git diff
+      working-directory: build-definitions
+
+    - name: Checkout infra-deployments-ci
+      uses: actions/checkout@v3
+      with:
+        path: infra-deployments-ci
+
+    - name: Create PR in build-definitions
+      env:
+        EC_AUTOMATION_KEY: ${{ secrets.EC_AUTOMATION_KEY }}
+        DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+        APP_INSTALL_ID: 32872589
+      run: |
+        set -o errexit
+        set -o pipefail
+        set -o nounset
+
+        function createJWT() {
+          local header=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 | sed s/\+/-/ | sed -E s/=+$//)
+          local now_utc=$(date --utc +%s)
+          local payload=$(echo -n '{"iat":'$((now_utc - 60))',"exp":'$((now_utc + 120))',"iss":245286}' | base64 | sed s/\+/-/ | sed -E s/=+$//)
+          local signature=$(echo -n "${header}.${payload}" | openssl dgst -sha256 -binary -sign <(echo "${EC_AUTOMATION_KEY}")| base64 | tr -d '\n=' | tr -- '+/' '-_')
+          echo "${header}.${payload}.${signature}"
+        }
+
+        GITHUB_TOKEN=$(curl -s -X POST -H "Authorization: Bearer $(createJWT)" -H "Accept: application/vnd.github+json" "https://api.github.com/app/installations/${APP_INSTALL_ID}/access_tokens" | jq -r .token) \
+        ./hack/create-pr.sh git@github.com:enterprise-contract/build-definitions.git ../build-definitions
       working-directory: infra-deployments-ci

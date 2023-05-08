@@ -15,23 +15,32 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Creates a pull request with updates to the redhat-appstudio/infra-deployments
-# repository.
+# Creates a pull request with updates from a local directory to the designated
+# remote repository.
 # Usage:
-#   create-pr.sh <PATH_TO_INFRA_DEPLOYMENTS> [<PR_REMOTE>]
+#   create-pr.sh <REMOTE_GIT> <LOCAL_PATH> [<PR_REMOTE>]
 
 set -o errexit
 set -o pipefail
+
+if [ -z "${1}" ] || [ -z "${2}" ]; then
+  echo "Usage $0 <REMOTE_GIT> <LOCAL_PATH> [<PR_REMOTE>]
+
+Example:
+$0 git@github.com:enterprise-contract/infra-deployments.git local-infra-deployments origin"
+  exit 1
+fi
+
 set -o nounset
 
 # The git repository where the local changes will be pushed to.
-EC_REMOTE="git@github.com:enterprise-contract/infra-deployments.git"
-
+REMOTE="${1}"
+# Local git directory with the changed files
+LOCAL="${2}"
 # The name of the git remote to create the PR against.
-PR_REMOTE="${2-origin}"
+PR_REMOTE="${3-origin}"
 
-INFRA_DEPLOYMENTS_DIR="${1}"
-cd "${INFRA_DEPLOYMENTS_DIR}" || exit 1
+cd "${LOCAL}" || exit 1
 
 # Setup key for access in the GH workflow
 if [ -n "${GITHUB_ACTIONS:-}" ]; then
@@ -44,7 +53,7 @@ if [ -n "${GITHUB_ACTIONS:-}" ]; then
   export GITHUB_USER="$GITHUB_ACTOR"
 fi
 
-git remote add ec "${EC_REMOTE}"
+git remote add ec "${REMOTE}"
 # Shallow clones prevent pushing to the remote in some cases.
 git fetch ec --unshallow
 
@@ -57,4 +66,4 @@ git commit -a -m "enterprise contract update"
 git push --force -u ec ${BRANCH_NAME}
 
 # create pull request, don't fail if it already exists
-gh pr create --fill --no-maintainer-edit --repo "$(git remote get-url --push ${PR_REMOTE})" || true
+gh pr create --fill --no-maintainer-edit --repo "$(git remote get-url --push "${PR_REMOTE}")" || true
