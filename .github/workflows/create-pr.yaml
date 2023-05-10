@@ -119,7 +119,7 @@ jobs:
     - name: Create PR in build-definitions
       env:
         EC_AUTOMATION_KEY: ${{ secrets.EC_AUTOMATION_KEY }}
-        DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+        DEPLOY_KEY: ${{ secrets.DEPLOY_KEY_BUILD_DEFINITIONS }}
         APP_INSTALL_ID: 32872589
       run: |
         set -o errexit
