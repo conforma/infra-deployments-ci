@@ -121,6 +121,7 @@ jobs:
         EC_AUTOMATION_KEY: ${{ secrets.EC_AUTOMATION_KEY }}
         DEPLOY_KEY: ${{ secrets.DEPLOY_KEY_BUILD_DEFINITIONS }}
         APP_INSTALL_ID: 32872589
+        KEEP_TAG: 1
       run: |
         set -o errexit
         set -o pipefail
