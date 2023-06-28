@@ -15,6 +15,9 @@ on:
     # At 09:00 UTC on Tuesday
     - cron: '0 9 * * 2'
 
+permissions:
+  contents: read
+
 jobs:
   create-infra-deployments-pr:
     # also run by default
@@ -24,15 +27,20 @@ jobs:
 
     steps:
 
+    - name: Harden Runner
+      uses: step-security/harden-runner@55d479fb1c5bcad5a4f9099a5d9f37c8857b2845 # v2.4.1
+      with:
+        egress-policy: audit
+
     - name: Checkout infra-deployments
-      uses: actions/checkout@v3
+      uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
       with:
         repository: redhat-appstudio/infra-deployments
         ref: main
         path: infra-deployments
 
     - name: Checkout ec-cli
-      uses: actions/checkout@v3
+      uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
       with:
         repository: enterprise-contract/ec-cli
         ref: main
@@ -43,7 +51,7 @@ jobs:
       working-directory: ec-cli
 
     - name: Checkout ec-policies
-      uses: actions/checkout@v3
+      uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
       with:
         repository: enterprise-contract/ec-policies
         ref: main
@@ -54,7 +62,7 @@ jobs:
       working-directory: ec-policies
 
     - name: Checkout enterprise-contract-controller
-      uses: actions/checkout@v3
+      uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
       with:
         repository: enterprise-contract/enterprise-contract-controller
         ref: main
@@ -69,7 +77,7 @@ jobs:
       working-directory: infra-deployments
 
     - name: Checkout infra-deployments-ci
-      uses: actions/checkout@v3
+      uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
       with:
         path: infra-deployments-ci
 
@@ -102,15 +110,20 @@ jobs:
 
     steps:
 
+    - name: Harden Runner
+      uses: step-security/harden-runner@55d479fb1c5bcad5a4f9099a5d9f37c8857b2845 # v2.4.1
+      with:
+        egress-policy: audit
+
     - name: Checkout build-definitions
-      uses: actions/checkout@v3
+      uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
       with:
         repository: redhat-appstudio/build-definitions
         ref: main
         path: build-definitions
 
     - name: Checkout ec-cli
-      uses: actions/checkout@v3
+      uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
       with:
         repository: enterprise-contract/ec-cli
         ref: main
@@ -127,7 +140,7 @@ jobs:
       working-directory: build-definitions
 
     - name: Checkout infra-deployments-ci
-      uses: actions/checkout@v3
+      uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
       with:
         path: infra-deployments-ci
 
