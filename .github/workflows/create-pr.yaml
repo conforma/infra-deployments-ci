@@ -34,14 +34,14 @@ jobs:
         disable-telemetry: true
 
     - name: Checkout infra-deployments
-      uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+      uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       with:
         repository: redhat-appstudio/infra-deployments
         ref: main
         path: infra-deployments
 
     - name: Checkout ec-cli
-      uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+      uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       with:
         repository: enterprise-contract/ec-cli
         ref: main
@@ -52,7 +52,7 @@ jobs:
       working-directory: ec-cli
 
     - name: Checkout ec-policies
-      uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+      uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       with:
         repository: enterprise-contract/ec-policies
         ref: main
@@ -63,7 +63,7 @@ jobs:
       working-directory: ec-policies
 
     - name: Checkout enterprise-contract-controller
-      uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+      uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       with:
         repository: enterprise-contract/enterprise-contract-controller
         ref: main
@@ -78,7 +78,7 @@ jobs:
       working-directory: infra-deployments
 
     - name: Checkout infra-deployments-ci
-      uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+      uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       with:
         path: infra-deployments-ci
 
@@ -118,14 +118,14 @@ jobs:
         disable-telemetry: true
 
     - name: Checkout build-definitions
-      uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+      uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       with:
         repository: redhat-appstudio/build-definitions
         ref: main
         path: build-definitions
 
     - name: Checkout ec-cli
-      uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+      uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       with:
         repository: enterprise-contract/ec-cli
         ref: main
@@ -142,7 +142,7 @@ jobs:
       working-directory: build-definitions
 
     - name: Checkout infra-deployments-ci
-      uses: actions/checkout@c85c95e3d7251135ab7dc9ce3241c5835cc595a9 # v3.5.3
+      uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
       with:
         path: infra-deployments-ci
 
