@@ -73,6 +73,19 @@ jobs:
       run: ./hack/update-infra-deployments.sh ../infra-deployments
       working-directory: enterprise-contract-controller
 
+    - name: Checkout ec-config
+      uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac # v4.0.0
+      with:
+        repository: enterprise-contract/config
+        ref: main
+        path: ec-config
+
+    - name: Update ec-config
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: ./hack/update-infra-deployments.sh ../infra-deployments
+      working-directory: ec-config
+
     - name: Display diff
       run: git diff
       working-directory: infra-deployments
