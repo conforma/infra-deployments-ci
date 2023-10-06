@@ -22,7 +22,7 @@ jobs:
   create-infra-deployments-pr:
     # also run by default
     if: >
-      github.event.inputs.chosen-os == 'infra-deployments' || github.event.inputs.chosen-os == 'both' || github.event.inputs.chosen-os == ''
+      inputs.run_for == 'infra-deployments' || inputs.run_for == 'both' || inputs.run_for == ''
     runs-on: ubuntu-latest
 
     steps:
@@ -119,7 +119,7 @@ jobs:
 
   create-build-definitions-pr:
     if: >
-      github.event.inputs.chosen-os == 'build-definitions' || github.event.inputs.chosen-os == 'both'
+      inputs.run_for == 'build-definitions' || inputs.run_for == 'both'
     runs-on: ubuntu-latest
 
     steps:
