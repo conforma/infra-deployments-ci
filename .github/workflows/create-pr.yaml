@@ -34,7 +34,7 @@ jobs:
         path: tenants-config
 
     - name: Update ec-policies
-      run: ./hack/update-ecp-resources.sh ../tenants-config
+      run: ./hack/update-infra-deployments.sh ../tenants-config
       working-directory: ec-policies
 
     - name: Checkout infra-deployments-ci
@@ -105,7 +105,7 @@ jobs:
         path: ec-policies
 
     - name: Update ec-policies
-      run: ./hack/update-ecp-resources.sh ../infra-deployments
+      run: ./hack/update-infra-deployments.sh ../infra-deployments
       working-directory: ec-policies
 
     - name: Checkout enterprise-contract-controller
