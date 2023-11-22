@@ -10,6 +10,7 @@ on:
         options:
         - infra-deployments
         - build-definitions
+        - tentants-config
         - both
   schedule:
     # At 09:00 UTC on Tuesday
@@ -19,6 +20,51 @@ permissions:
   contents: read
 
 jobs:
+  create-tentants-config-pr:
+    if: >
+      inputs.run_for == 'tentants-config' || inputs.run_for == 'both' || inputs.run_for == ''
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout tenants-config
+      uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      with:
+        repository: redhat-appstudio/tenants-config
+        ref: main
+        path: tenants-config
+
+    - name: Update ec-policies
+      run: ./hack/update-ecp-resources.sh ../tenants-config
+      working-directory: ec-policies
+
+    - name: Checkout infra-deployments-ci
+      uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      with:
+        path: infra-deployments-ci
+
+    - name: Create PR in infra-deployments
+      env:
+        EC_AUTOMATION_KEY: ${{ secrets.EC_AUTOMATION_KEY }}
+        DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+        APP_INSTALL_ID: 32872589
+      run: |
+        set -o errexit
+        set -o pipefail
+        set -o nounset
+
+        function createJWT() {
+          local header=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 | sed s/\+/-/ | sed -E s/=+$//)
+          local now_utc=$(date --utc +%s)
+          local payload=$(echo -n '{"iat":'$((now_utc - 60))',"exp":'$((now_utc + 120))',"iss":245286}' | base64 | sed s/\+/-/ | sed -E s/=+$//)
+          local signature=$(echo -n "${header}.${payload}" | openssl dgst -sha256 -binary -sign <(echo "${EC_AUTOMATION_KEY}")| base64 | tr -d '\n=' | tr -- '+/' '-_')
+          echo "${header}.${payload}.${signature}"
+        }
+
+        GITHUB_TOKEN=$(curl -s -X POST -H "Authorization: Bearer $(createJWT)" -H "Accept: application/vnd.github+json" "https://api.github.com/app/installations/${APP_INSTALL_ID}/access_tokens" | jq -r .token) \
+        ./hack/create-pr.sh git@github.com:enterprise-contract/tenants-config.git ../tentants-config
+      working-directory: infra-deployments-ci
+
+
   create-infra-deployments-pr:
     # also run by default
     if: >
@@ -59,7 +105,7 @@ jobs:
         path: ec-policies
 
     - name: Update ec-policies
-      run: ./hack/update-infra-deployments.sh ../infra-deployments
+      run: ./hack/update-ecp-resources.sh ../infra-deployments
       working-directory: ec-policies
 
     - name: Checkout enterprise-contract-controller
