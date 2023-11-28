@@ -11,7 +11,7 @@ on:
         - infra-deployments
         - build-definitions
         - tentants-config
-        - both
+        - all
   schedule:
     # At 09:00 UTC on Tuesday
     - cron: '0 9 * * 2'
@@ -22,10 +22,18 @@ permissions:
 jobs:
   create-tentants-config-pr:
     if: >
-      inputs.run_for == 'tentants-config' || inputs.run_for == 'both' || inputs.run_for == ''
+      inputs.run_for == 'tentants-config' || inputs.run_for == 'all' || inputs.run_for == ''
     runs-on: ubuntu-latest
 
     steps:
+
+    - name: Harden Runner
+      uses: step-security/harden-runner@eb238b55efaa70779f274895e782ed17c84f2895 # v2.6.1
+      with:
+        egress-policy: audit
+        disable-telemetry: true
+
+    # this is the repo we want to update
     - name: Checkout tenants-config
       uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       with:
@@ -33,19 +41,33 @@ jobs:
         ref: main
         path: tenants-config
 
-    - name: Update ec-policies
+    - name: Checkout ec-policies
+      uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+      with:
+        repository: enterprise-contract/ec-policies
+        ref: main
+        path: ec-policies
+
+    # ./hack/update-infra-deployments.sh ../tenants-config will update any files under tenants-config to the latest release policy
+    - name: Update policies in tenants-config
       run: ./hack/update-infra-deployments.sh ../tenants-config
       working-directory: ec-policies
 
+    - name: Run kustomize to populate the auto-generated files
+      run: ./build-manifests.sh
+      working-directory: tenants-config
+
+    # checkout this repo to run create-pr.sh
     - name: Checkout infra-deployments-ci
       uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
       with:
         path: infra-deployments-ci
 
-    - name: Create PR in infra-deployments
+    # create-pr.sh changes directory to the upstream tenants-config, creates a remote from the fork and pushes the changes to the fork
+    - name: Create PR in tentants-config
       env:
         EC_AUTOMATION_KEY: ${{ secrets.EC_AUTOMATION_KEY }}
-        DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+        DEPLOY_KEY: ${{ secrets.DEPLOY_KEY_TENANTS_CONFIG }}
         APP_INSTALL_ID: 32872589
       run: |
         set -o errexit
@@ -68,7 +90,7 @@ jobs:
   create-infra-deployments-pr:
     # also run by default
     if: >
-      inputs.run_for == 'infra-deployments' || inputs.run_for == 'both' || inputs.run_for == ''
+      inputs.run_for == 'infra-deployments' || inputs.run_for == 'all' || inputs.run_for == ''
     runs-on: ubuntu-latest
 
     steps:
@@ -165,7 +187,7 @@ jobs:
 
   create-build-definitions-pr:
     if: >
-      inputs.run_for == 'build-definitions' || inputs.run_for == 'both'
+      inputs.run_for == 'build-definitions' || inputs.run_for == 'all'
     runs-on: ubuntu-latest
 
     steps:
