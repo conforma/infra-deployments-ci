@@ -10,7 +10,7 @@ on:
         options:
         - infra-deployments
         - build-definitions
-        - tentants-config
+        - tenants-config
         - all
   schedule:
     # At 09:00 UTC on Tuesday
@@ -20,9 +20,9 @@ permissions:
   contents: read
 
 jobs:
-  create-tentants-config-pr:
+  create-tenants-config-pr:
     if: >
-      inputs.run_for == 'tentants-config' || inputs.run_for == 'all' || inputs.run_for == ''
+      inputs.run_for == 'tenants-config' || inputs.run_for == 'all' || inputs.run_for == ''
     runs-on: ubuntu-latest
 
     steps:
@@ -64,7 +64,7 @@ jobs:
         path: infra-deployments-ci
 
     # create-pr.sh changes directory to the upstream tenants-config, creates a remote from the fork and pushes the changes to the fork
-    - name: Create PR in tentants-config
+    - name: Create PR in tenants-config
       env:
         EC_AUTOMATION_KEY: ${{ secrets.EC_AUTOMATION_KEY }}
         DEPLOY_KEY: ${{ secrets.DEPLOY_KEY_TENANTS_CONFIG }}
@@ -83,7 +83,7 @@ jobs:
         }
 
         GITHUB_TOKEN=$(curl -s -X POST -H "Authorization: Bearer $(createJWT)" -H "Accept: application/vnd.github+json" "https://api.github.com/app/installations/${APP_INSTALL_ID}/access_tokens" | jq -r .token) \
-        ./hack/create-pr.sh git@github.com:enterprise-contract/tenants-config.git ../tentants-config
+        ./hack/create-pr.sh git@github.com:enterprise-contract/tenants-config.git ../tenants-config
       working-directory: infra-deployments-ci
 
 
