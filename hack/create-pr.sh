@@ -43,12 +43,15 @@ PR_REMOTE="${3-origin}"
 cd "${LOCAL}" || exit 1
 
 # Setup key for access in the GH workflow
-if [ -n "${GITHUB_ACTIONS:-}" ]; then
-  git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
-  git config --global user.name "${GITHUB_ACTOR}"
+if [ -n "${APP_INSTALL_ID:-}" ]; then
+  git config --global user.email "${APP_INSTALL_ID}-ec-automation[bot]@users.noreply.github.com"
+  git config --global user.name "ec-automation[bot]"
+  git config --global commit.gpgsign true
+  git config --global gpg.format ssh
   mkdir -p "${HOME}/.ssh"
   echo "${DEPLOY_KEY}" > "${HOME}/.ssh/id_ed25519"
   chmod 600 "${HOME}/.ssh/id_ed25519"
+  git config --global user.signingkey "$(ssh-add -L)"
   trap 'rm -rf "${HOME}/.ssh/id_rsa"' EXIT
   export GITHUB_USER="$GITHUB_ACTOR"
 fi
