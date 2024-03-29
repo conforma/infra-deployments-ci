@@ -163,9 +163,6 @@ jobs:
       with:
         path: infra-deployments-ci
 
-    - name: Setup upterm session
-      uses: lhotari/action-upterm@v1
-
     - name: Create PR in infra-deployments
       env:
         EC_AUTOMATION_KEY: ${{ secrets.EC_AUTOMATION_KEY }}
