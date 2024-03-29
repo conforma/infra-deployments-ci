@@ -51,7 +51,8 @@ if [ -n "${APP_INSTALL_ID:-}" ]; then
   mkdir -p "${HOME}/.ssh"
   echo "${DEPLOY_KEY}" > "${HOME}/.ssh/id_ed25519"
   chmod 600 "${HOME}/.ssh/id_ed25519"
-  git config --global user.signingKey "$(ssh-keygen -y -f "${HOME}/.ssh/id_ed25519")"
+  ssh-keygen -y -f "${HOME}/.ssh/id_ed25519" >"${HOME}/.ssh/id_ed25519.pub"
+  git config --global user.signingKey "${HOME}/.ssh/id_ed25519.pub"
   trap 'rm -rf "${HOME}/.ssh/id_ed25519"' EXIT
   export GITHUB_USER="$GITHUB_ACTOR"
 fi
