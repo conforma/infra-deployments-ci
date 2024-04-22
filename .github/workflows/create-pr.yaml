@@ -35,14 +35,14 @@ jobs:
 
     # this is the repo we want to update
     - name: Checkout tenants-config
-      uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
+      uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f # v4.1.3
       with:
         repository: redhat-appstudio/tenants-config
         ref: main
         path: tenants-config
 
     - name: Checkout ec-policies
-      uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
+      uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f # v4.1.3
       with:
         repository: enterprise-contract/ec-policies
         ref: main
@@ -59,7 +59,7 @@ jobs:
 
     # checkout this repo to run create-pr.sh
     - name: Checkout infra-deployments-ci
-      uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
+      uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f # v4.1.3
       with:
         path: infra-deployments-ci
 
@@ -102,14 +102,14 @@ jobs:
         disable-telemetry: true
 
     - name: Checkout infra-deployments
-      uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
+      uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f # v4.1.3
       with:
         repository: redhat-appstudio/infra-deployments
         ref: main
         path: infra-deployments
 
     - name: Checkout ec-cli
-      uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
+      uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f # v4.1.3
       with:
         repository: enterprise-contract/ec-cli
         ref: main
@@ -120,7 +120,7 @@ jobs:
       working-directory: ec-cli
 
     - name: Checkout ec-policies
-      uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
+      uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f # v4.1.3
       with:
         repository: enterprise-contract/ec-policies
         ref: main
@@ -131,7 +131,7 @@ jobs:
       working-directory: ec-policies
 
     - name: Checkout enterprise-contract-controller
-      uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
+      uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f # v4.1.3
       with:
         repository: enterprise-contract/enterprise-contract-controller
         ref: main
@@ -142,7 +142,7 @@ jobs:
       working-directory: enterprise-contract-controller
 
     - name: Checkout ec-config
-      uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
+      uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f # v4.1.3
       with:
         repository: enterprise-contract/config
         ref: main
@@ -159,7 +159,7 @@ jobs:
       working-directory: infra-deployments
 
     - name: Checkout infra-deployments-ci
-      uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
+      uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f # v4.1.3
       with:
         path: infra-deployments-ci
 
@@ -199,14 +199,14 @@ jobs:
         disable-telemetry: true
 
     - name: Checkout build-definitions
-      uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
+      uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f # v4.1.3
       with:
         repository: redhat-appstudio/build-definitions
         ref: main
         path: build-definitions
 
     - name: Checkout ec-cli
-      uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
+      uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f # v4.1.3
       with:
         repository: enterprise-contract/ec-cli
         ref: main
@@ -223,7 +223,7 @@ jobs:
       working-directory: build-definitions
 
     - name: Checkout infra-deployments-ci
-      uses: actions/checkout@9bb56186c3b09b4f86b1c65136769dd318469633 # v4.1.2
+      uses: actions/checkout@1d96c772d19495a3b5c517cd2bc0cb401ea0529f # v4.1.3
       with:
         path: infra-deployments-ci
 
