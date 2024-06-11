@@ -201,7 +201,7 @@ jobs:
     - name: Checkout build-definitions
       uses: actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29 # v4.1.6
       with:
-        repository: redhat-appstudio/build-definitions
+        repository: konflux-ci/build-definitions
         ref: main
         path: build-definitions
 
