@@ -10,7 +10,6 @@ on:
         options:
         - infra-deployments
         - build-definitions
-        - tenants-config
         - all
   schedule:
     # At 09:00 UTC on Tuesday
@@ -20,73 +19,6 @@ permissions:
   contents: read
 
 jobs:
-  create-tenants-config-pr:
-    if: >
-      inputs.run_for == 'tenants-config' || inputs.run_for == 'all' || inputs.run_for == ''
-    runs-on: ubuntu-latest
-
-    steps:
-
-    - name: Harden Runner
-      uses: step-security/harden-runner@0d381219ddf674d61a7572ddd19d7941e271515c # v2.9.0
-      with:
-        egress-policy: audit
-        disable-telemetry: true
-
-    # this is the repo we want to update
-    - name: Checkout tenants-config
-      uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
-      with:
-        repository: redhat-appstudio/tenants-config
-        ref: main
-        path: tenants-config
-
-    - name: Checkout ec-policies
-      uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
-      with:
-        repository: enterprise-contract/ec-policies
-        ref: main
-        path: ec-policies
-
-    # ./hack/update-infra-deployments.sh ../tenants-config will update any files under tenants-config to the latest release policy
-    - name: Update policies in tenants-config
-      run: ./hack/update-infra-deployments.sh ../tenants-config
-      working-directory: ec-policies
-
-    - name: Run kustomize to populate the auto-generated files
-      run: ./build-manifests.sh
-      working-directory: tenants-config
-
-    # checkout this repo to run create-pr.sh
-    - name: Checkout infra-deployments-ci
-      uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
-      with:
-        path: infra-deployments-ci
-
-    # create-pr.sh changes directory to the upstream tenants-config, creates a remote from the fork and pushes the changes to the fork
-    - name: Create PR in tenants-config
-      env:
-        EC_AUTOMATION_KEY: ${{ secrets.EC_AUTOMATION_KEY }}
-        DEPLOY_KEY: ${{ secrets.DEPLOY_KEY_TENANTS_CONFIG }}
-        APP_INSTALL_ID: 32872589
-      run: |
-        set -o errexit
-        set -o pipefail
-        set -o nounset
-
-        function createJWT() {
-          local header=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 | sed s/\+/-/ | sed -E s/=+$//)
-          local now_utc=$(date --utc +%s)
-          local payload=$(echo -n '{"iat":'$((now_utc - 60))',"exp":'$((now_utc + 120))',"iss":245286}' | base64 | sed s/\+/-/ | sed -E s/=+$//)
-          local signature=$(echo -n "${header}.${payload}" | openssl dgst -sha256 -binary -sign <(echo "${EC_AUTOMATION_KEY}")| base64 | tr -d '\n=' | tr -- '+/' '-_')
-          echo "${header}.${payload}.${signature}"
-        }
-
-        GITHUB_TOKEN=$(curl -s -X POST -H "Authorization: Bearer $(createJWT)" -H "Accept: application/vnd.github+json" "https://api.github.com/app/installations/${APP_INSTALL_ID}/access_tokens" | jq -r .token) \
-        ./hack/create-pr.sh git@github.com:enterprise-contract/tenants-config.git ../tenants-config
-      working-directory: infra-deployments-ci
-
-
   create-infra-deployments-pr:
     # also run by default
     if: >
