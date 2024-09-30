@@ -34,14 +34,14 @@ jobs:
         disable-telemetry: true
 
     - name: Checkout infra-deployments
-      uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938 # v4.2.0
       with:
         repository: redhat-appstudio/infra-deployments
         ref: main
         path: infra-deployments
 
     - name: Checkout ec-cli
-      uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938 # v4.2.0
       with:
         repository: enterprise-contract/ec-cli
         ref: main
@@ -52,7 +52,7 @@ jobs:
       working-directory: ec-cli
 
     - name: Checkout ec-policies
-      uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938 # v4.2.0
       with:
         repository: enterprise-contract/ec-policies
         ref: main
@@ -63,7 +63,7 @@ jobs:
       working-directory: ec-policies
 
     - name: Checkout enterprise-contract-controller
-      uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938 # v4.2.0
       with:
         repository: enterprise-contract/enterprise-contract-controller
         ref: main
@@ -74,7 +74,7 @@ jobs:
       working-directory: enterprise-contract-controller
 
     - name: Checkout ec-config
-      uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938 # v4.2.0
       with:
         repository: enterprise-contract/config
         ref: main
@@ -91,7 +91,7 @@ jobs:
       working-directory: infra-deployments
 
     - name: Checkout infra-deployments-ci
-      uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938 # v4.2.0
       with:
         path: infra-deployments-ci
 
@@ -131,14 +131,14 @@ jobs:
         disable-telemetry: true
 
     - name: Checkout build-definitions
-      uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938 # v4.2.0
       with:
         repository: konflux-ci/build-definitions
         ref: main
         path: build-definitions
 
     - name: Checkout ec-cli
-      uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938 # v4.2.0
       with:
         repository: enterprise-contract/ec-cli
         ref: main
@@ -155,7 +155,7 @@ jobs:
       working-directory: build-definitions
 
     - name: Checkout infra-deployments-ci
-      uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      uses: actions/checkout@d632683dd7b4114ad314bca15554477dd762a938 # v4.2.0
       with:
         path: infra-deployments-ci
 
