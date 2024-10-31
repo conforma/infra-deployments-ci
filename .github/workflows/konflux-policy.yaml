@@ -24,9 +24,12 @@ jobs:
         registry: quay.io
 
     - name: Tag latest
-      uses: redhat-actions/push-to-registry@v2
-      with:
-        image: quay.io/enterprise-contract/ec-release-policy:latest
-        tags: |
-          konflux
-        registry: quay.io/enterprise-contract/ec-release-policy
+      run: |
+        set -euo pipefail
+
+        skopeo copy --all --digestfile image.digest \
+          docker://quay.io/enterprise-contract/ec-release-policy:latest \
+          docker://quay.io/enterprise-contract/ec-release-policy:konflux
+
+        echo -n "Image Digest: "
+        cat image.digest
