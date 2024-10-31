@@ -1,0 +1,32 @@
+---
+name: konflux-policy
+
+on:
+  workflow_dispatch:
+  schedule:
+    # At 08:30 UTC on Tuesday
+    - cron: '30 8 * * 2'
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+
+    steps:
+
+    - name: Log in to quay.io
+      uses: redhat-actions/podman-login@v1
+      with:
+        username: ${{ secrets.BUNDLE_PUSH_USER_EC }}
+        password: ${{ secrets.BUNDLE_PUSH_PASS_EC }}
+        registry: quay.io
+
+    - name: Tag latest
+      uses: redhat-actions/push-to-registry@v2
+      with:
+        image: quay.io/enterprise-contract/ec-release-policy:latest
+        tags: |
+          konflux
+        registry: quay.io/enterprise-contract/ec-release-policy
