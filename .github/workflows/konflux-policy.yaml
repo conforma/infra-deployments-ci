@@ -23,13 +23,24 @@ jobs:
         password: ${{ secrets.BUNDLE_PUSH_PASS_EC }}
         registry: quay.io
 
-    - name: Tag latest
+    - name: Tag latest release policy
       run: |
         set -euo pipefail
 
         skopeo copy --all --digestfile image.digest \
           docker://quay.io/enterprise-contract/ec-release-policy:latest \
           docker://quay.io/enterprise-contract/ec-release-policy:konflux
+
+        echo -n "Image Digest: "
+        cat image.digest
+
+    - name: Tag latest task policy
+      run: |
+        set -euo pipefail
+
+        skopeo copy --all --digestfile image.digest \
+          docker://quay.io/enterprise-contract/ec-task-policy:latest \
+          docker://quay.io/enterprise-contract/ec-task-policy:konflux
 
         echo -n "Image Digest: "
         cat image.digest
