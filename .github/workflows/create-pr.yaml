@@ -51,17 +51,6 @@ jobs:
       run: ./hack/update-infra-deployments.sh ../infra-deployments
       working-directory: ec-cli
 
-    - name: Checkout ec-policies
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-      with:
-        repository: enterprise-contract/ec-policies
-        ref: main
-        path: ec-policies
-
-    - name: Update ec-policies
-      run: ./hack/update-infra-deployments.sh ../infra-deployments
-      working-directory: ec-policies
-
     - name: Checkout enterprise-contract-controller
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       with:
