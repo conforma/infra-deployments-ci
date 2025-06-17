@@ -40,16 +40,16 @@ jobs:
         ref: main
         path: infra-deployments
 
-    - name: Checkout ec-cli
+    - name: Checkout ec
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       with:
-        repository: enterprise-contract/ec-cli
+        repository: conforma/cli
         ref: main
-        path: ec-cli
+        path: cli
 
-    - name: Update ec-cli
+    - name: Update ec
       run: ./hack/update-infra-deployments.sh ../infra-deployments
-      working-directory: ec-cli
+      working-directory: cli
 
     - name: Checkout enterprise-contract-controller
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -126,18 +126,18 @@ jobs:
         ref: main
         path: build-definitions
 
-    - name: Checkout ec-cli
+    - name: Checkout ec
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       with:
-        repository: enterprise-contract/ec-cli
+        repository: conforma/cli
         ref: main
-        path: ec-cli
+        path: cli
 
-    - name: Update ec-cli
+    - name: Update ec
       env:
         KEEP_TAG: 1
       run: ./hack/update-build-definitions.sh ../build-definitions
-      working-directory: ec-cli
+      working-directory: cli
 
     - name: Display diff
       run: git diff
