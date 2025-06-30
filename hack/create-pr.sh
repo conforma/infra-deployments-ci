@@ -27,7 +27,7 @@ if [ -z "${1}" ] || [ -z "${2}" ]; then
   echo "Usage $0 <REMOTE_GIT> <LOCAL_PATH> [<PR_REMOTE>]
 
 Example:
-$0 git@github.com:enterprise-contract/infra-deployments.git local-infra-deployments origin"
+$0 git@github.com:conforma/infra-deployments.git local-infra-deployments origin"
   exit 1
 fi
 
