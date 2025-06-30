@@ -167,5 +167,5 @@ jobs:
         }
 
         GITHUB_TOKEN=$(curl -s -X POST -H "Authorization: Bearer $(createJWT)" -H "Accept: application/vnd.github+json" "https://api.github.com/app/installations/${APP_INSTALL_ID}/access_tokens" | jq -r .token) \
-        ./hack/create-pr.sh git@github.com:enterprise-contract/build-definitions.git ../build-definitions
+        ./hack/create-pr.sh git@github.com:conforma/build-definitions.git ../build-definitions
       working-directory: infra-deployments-ci
