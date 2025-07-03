@@ -35,21 +35,23 @@ jobs:
         set -euo pipefail
 
         for repo in enterprise-contract/ec-release-policy conforma/release-policy; do
+          echo "Updating quay.io/${repo}:konflux"
           skopeo copy --all --digestfile image.digest \
             docker://quay.io/${repo}:latest docker://quay.io/${repo}:konflux
-        done
 
-        echo -n "Image Digest: "
-        cat image.digest
+          echo -n "Image Digest: "
+          cat image.digest
+        done
 
     - name: Tag latest task policy
       run: |
         set -euo pipefail
 
         for repo in enterprise-contract/ec-task-policy conforma/task-policy; do
+          echo "Updating quay.io/${repo}:konflux"
           skopeo copy --all --digestfile image.digest \
             docker://quay.io/${repo}:latest docker://quay.io/${repo}:konflux
-        done
 
-        echo -n "Image Digest: "
-        cat image.digest
+          echo -n "Image Digest: "
+          cat image.digest
+        done
