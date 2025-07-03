@@ -38,10 +38,10 @@ jobs:
           echo "Updating quay.io/${repo}:konflux"
           skopeo copy --all --digestfile image.digest \
             docker://quay.io/${repo}:latest docker://quay.io/${repo}:konflux
-        done
 
-        echo -n "Image Digest: "
-        cat image.digest
+          echo -n "Image Digest: "
+          cat image.digest
+        done
 
     - name: Tag latest task policy
       run: |
@@ -51,7 +51,7 @@ jobs:
           echo "Updating quay.io/${repo}:konflux"
           skopeo copy --all --digestfile image.digest \
             docker://quay.io/${repo}:latest docker://quay.io/${repo}:konflux
-        done
 
-        echo -n "Image Digest: "
-        cat image.digest
+          echo -n "Image Digest: "
+          cat image.digest
+        done
