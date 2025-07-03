@@ -16,20 +16,28 @@ jobs:
 
     steps:
 
-    - name: Log in to quay.io
+    - name: Log in to quay.io/enterprise-contract
       uses: redhat-actions/podman-login@v1
       with:
         username: ${{ secrets.BUNDLE_PUSH_USER_EC }}
         password: ${{ secrets.BUNDLE_PUSH_PASS_EC }}
-        registry: quay.io
+        registry: quay.io/enterprise-contract
+
+    - name: Log in to quay.io/conforma
+      uses: redhat-actions/podman-login@v1
+      with:
+        username: ${{ secrets.BUNDLE_PUSH_USER_CONFORMA }}
+        password: ${{ secrets.BUNDLE_PUSH_PASS_CONFORMA }}
+        registry: quay.io/conforma
 
     - name: Tag latest release policy
       run: |
         set -euo pipefail
 
-        skopeo copy --all --digestfile image.digest \
-          docker://quay.io/enterprise-contract/ec-release-policy:latest \
-          docker://quay.io/enterprise-contract/ec-release-policy:konflux
+        for repo in enterprise-contract/ec-release-policy conforma/release-policy; do
+          skopeo copy --all --digestfile image.digest \
+            docker://quay.io/${repo}:latest docker://quay.io/${repo}:konflux
+        done
 
         echo -n "Image Digest: "
         cat image.digest
@@ -38,9 +46,10 @@ jobs:
       run: |
         set -euo pipefail
 
-        skopeo copy --all --digestfile image.digest \
-          docker://quay.io/enterprise-contract/ec-task-policy:latest \
-          docker://quay.io/enterprise-contract/ec-task-policy:konflux
+        for repo in enterprise-contract/ec-task-policy conforma/task-policy; do
+          skopeo copy --all --digestfile image.digest \
+            docker://quay.io/${repo}:latest docker://quay.io/${repo}:konflux
+        done
 
         echo -n "Image Digest: "
         cat image.digest
