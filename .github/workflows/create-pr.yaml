@@ -88,7 +88,7 @@ jobs:
       env:
         EC_AUTOMATION_KEY: ${{ secrets.EC_AUTOMATION_KEY }}
         DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
-        APP_INSTALL_ID: 32872589
+        APP_INSTALL_ID: ${{ secrets.APP_INSTALL_ID }}
       run: |
         set -o errexit
         set -o pipefail
@@ -152,7 +152,7 @@ jobs:
       env:
         EC_AUTOMATION_KEY: ${{ secrets.EC_AUTOMATION_KEY }}
         DEPLOY_KEY: ${{ secrets.DEPLOY_KEY_BUILD_DEFINITIONS }}
-        APP_INSTALL_ID: 32872589
+        APP_INSTALL_ID: ${{ secrets.APP_INSTALL_ID }}
       run: |
         set -o errexit
         set -o pipefail
