@@ -4,8 +4,9 @@ name: create-pr
 on:
   workflow_dispatch:
   schedule:
-    # At 09:00 UTC on Tuesday
-    - cron: '0 9 * * 2'
+    # This should conincide with the Konflux maintence window.
+    # This is currently Friday at 1AM-3AM UTC or 10AM-2PM UTC
+    - cron: '0 10 * * 5'
 
 permissions:
   contents: read
