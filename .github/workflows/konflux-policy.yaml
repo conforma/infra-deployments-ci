@@ -3,9 +3,10 @@ name: konflux-policy
 
 on:
   workflow_dispatch:
-  schedule:
-    # At 08:30 UTC on Tuesday
-    - cron: '30 8 * * 2'
+  # Disabled as part of konflux release freeze and ITN-2026-00051
+  # schedule:
+  #   # At 08:30 UTC on Tuesday
+  #   - cron: '30 8 * * 2'
 
 permissions:
   contents: read
