@@ -41,16 +41,16 @@ jobs:
       run: ./hack/update-infra-deployments.sh ../infra-deployments
       working-directory: cli
 
-    - name: Checkout enterprise-contract-controller
+    - name: Checkout conforma-crds
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
-        repository: enterprise-contract/enterprise-contract-controller
+        repository: conforma/crds
         ref: main
-        path: enterprise-contract-controller
+        path: conforma-crds
 
-    - name: Update enterprise-contract-controller
+    - name: Update conforma-crds
       run: ./hack/update-infra-deployments.sh ../infra-deployments
-      working-directory: enterprise-contract-controller
+      working-directory: conforma-crds
 
     - name: Checkout ec-config
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
