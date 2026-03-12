@@ -1,0 +1,92 @@
+# Copyright The Conforma Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Install Tekton Pipelines from official release
+resources:
+  - https://storage.googleapis.com/tekton-releases/pipeline/previous/v0.66.0/release.yaml
+
+patches:
+  # Enable Tekton feature flags for task resolution and step actions
+  - patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: feature-flags
+        namespace: tekton-pipelines
+      data:
+        enable-tekton-oci-bundles: "true"
+        enable-step-actions: "true"
+  # Reduce Tekton controller CPU requests for Kind cluster
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: tekton-pipelines-controller
+        namespace: tekton-pipelines
+      spec:
+        template:
+          spec:
+            containers:
+            - name: tekton-pipelines-controller
+              resources:
+                requests:
+                  cpu: 50m
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: tekton-pipelines-webhook
+        namespace: tekton-pipelines
+      spec:
+        template:
+          spec:
+            containers:
+            - name: webhook
+              resources:
+                requests:
+                  cpu: 50m
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: tekton-events-controller
+        namespace: tekton-pipelines
+      spec:
+        template:
+          spec:
+            containers:
+            - name: tekton-events-controller
+              resources:
+                requests:
+                  cpu: 50m
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: tekton-pipelines-remote-resolvers
+        namespace: tekton-pipelines-resolvers
+      spec:
+        template:
+          spec:
+            containers:
+            - name: controller
+              resources:
+                requests:
+                  cpu: 50m
