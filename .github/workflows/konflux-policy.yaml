@@ -12,8 +12,28 @@ permissions:
   contents: read
 
 jobs:
+  acceptance-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: acceptance/go.mod
+
+    - name: Install kind
+      uses: helm/kind-action@v1
+      with:
+        install_only: true
+
+    - name: Run acceptance tests
+      run: make acceptance
+
   tag:
     runs-on: ubuntu-latest
+    needs: [acceptance-tests]
 
     steps:
 
@@ -52,3 +72,12 @@ jobs:
             docker://quay.io/${repo}:latest docker://quay.io/${repo}:konflux
           echo "Image digest: $(cat image.digest)"
         done
+
+    - name: Tag latest tekton-task
+      run: |
+        set -euo pipefail
+
+        echo "Updating quay.io/conforma/tekton-task:konflux"
+        skopeo copy --all --digestfile image.digest \
+          docker://quay.io/conforma/tekton-task:latest docker://quay.io/conforma/tekton-task:konflux
+        echo "Image digest: $(cat image.digest)"
