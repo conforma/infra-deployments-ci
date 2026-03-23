@@ -14,6 +14,8 @@ permissions:
 jobs:
   acceptance-tests:
     runs-on: ubuntu-latest
+    outputs:
+      bundle-digests: ${{ steps.resolve-digests.outputs.bundle-digests }}
 
     steps:
     - uses: actions/checkout@v4
@@ -23,10 +25,23 @@ jobs:
       with:
         go-version-file: acceptance/go.mod
 
+    - name: Install crane
+      uses: imjasonh/setup-crane@v0.4
+
+    - name: Install yq
+      uses: mikefarah/yq@v4
+
     - name: Install kind
       uses: helm/kind-action@v1
       with:
         install_only: true
+
+    - name: Resolve bundle digests
+      id: resolve-digests
+      run: |
+        set -euo pipefail
+        DIGESTS=$(./hack/resolve-bundle-digests.sh)
+        echo "bundle-digests=${DIGESTS}" >> "$GITHUB_OUTPUT"
 
     - name: Run acceptance tests
       run: make acceptance
@@ -78,20 +93,23 @@ jobs:
           echo "Image digest: $(cat image.digest)"
         done
 
-    - name: Tag tested tekton-task bundles
+    - name: Tag tested tekton-task bundles by digest
+      env:
+        BUNDLE_DIGESTS: ${{ needs.acceptance-tests.outputs.bundle-digests }}
       run: |
         set -euo pipefail
 
-        ./hack/tested-bundle-urls.sh | while read -r bundle; do
-          echo "Updating ${bundle} → ${bundle%:*}:konflux"
+        echo "$BUNDLE_DIGESTS" | jq -r 'to_entries[] | "\(.key)|\(.value)"' | while IFS='|' read -r url pinned; do
+          repo="${url%%:*}"
+          echo "Tagging ${pinned} → ${repo}:konflux"
           skopeo copy --all --digestfile image.digest \
-            "docker://${bundle}" "docker://${bundle%:*}:konflux"
+            "docker://${pinned}" "docker://${repo}:konflux"
           echo "Image digest: $(cat image.digest)"
         done
 
   tekton-catalog-release:
     runs-on: ubuntu-latest
-    needs: [acceptance-tests]
+    needs: [acceptance-tests, tag]
 
     steps:
     - uses: actions/checkout@v4
@@ -102,7 +120,9 @@ jobs:
     - name: Install yq
       uses: mikefarah/yq@v4
 
-    - name: Extract tested tasks from bundles
+    - name: Extract tested tasks from pinned bundle digests
+      env:
+        BUNDLE_DIGESTS: ${{ needs.acceptance-tests.outputs.bundle-digests }}
       run: ./hack/extract-tested-tasks.sh /tmp/catalog-tasks
 
     - name: Checkout tekton-catalog

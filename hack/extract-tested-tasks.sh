@@ -22,8 +22,17 @@
 # YAML files for bundle resolver taskRefs. Only tasks that are referenced in
 # acceptance pipelines (and therefore tested) are extracted.
 #
+# When the BUNDLE_DIGESTS environment variable is set (JSON object mapping
+# bundle URL to pinned "repo@sha256:..." reference), the script uses those
+# exact digests instead of the tag from the pipeline YAML. This ensures the
+# extracted tasks come from the exact image that was tested.
+#
 # Usage:
 #   extract-tested-tasks.sh <output-dir>
+#
+# Environment:
+#   BUNDLE_DIGESTS - Optional JSON object mapping bundle URLs to digest-pinned
+#                    references (e.g. from resolve-bundle-digests.sh)
 
 set -euo pipefail
 
@@ -63,6 +72,16 @@ declare -A BUNDLE_MAP
 for entry in "${BUNDLE_TASKS[@]}"; do
     bundle="${entry%%|*}"
     task_name="${entry##*|}"
+    # If BUNDLE_DIGESTS is set, resolve to the pinned digest reference
+    if [ -n "${BUNDLE_DIGESTS:-}" ]; then
+        pinned=$(echo "$BUNDLE_DIGESTS" | jq -r --arg url "$bundle" '.[$url] // empty')
+        if [ -n "$pinned" ]; then
+            bundle="$pinned"
+        else
+            echo "ERROR: No digest found for bundle ${bundle} in BUNDLE_DIGESTS"
+            exit 1
+        fi
+    fi
     BUNDLE_MAP["$bundle"]+="${task_name} "
     echo "Found: bundle=${bundle} task=${task_name}"
 done
@@ -89,7 +108,10 @@ for bundle in "${!BUNDLE_MAP[@]}"; do
         fi
 
         # Extract the task YAML (layers are tar+gzip encoded)
-        TASK_YAML=$(crane blob "${bundle}@${DIGEST}" | gunzip | tar -xO)
+        # Strip any existing tag or digest from the bundle reference to get the repo
+        REPO="${bundle%%@*}"
+        REPO="${REPO%%:*}"
+        TASK_YAML=$(crane blob "${REPO}@${DIGEST}" | gunzip | tar -xO)
 
         # Get version from task labels
         VERSION=$(echo "$TASK_YAML" | yq eval '.metadata.labels["app.kubernetes.io/version"]' -)
