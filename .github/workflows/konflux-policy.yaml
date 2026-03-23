@@ -81,3 +81,72 @@ jobs:
         skopeo copy --all --digestfile image.digest \
           docker://quay.io/conforma/tekton-task:latest docker://quay.io/conforma/tekton-task:konflux
         echo "Image digest: $(cat image.digest)"
+
+  tekton-catalog-release:
+    runs-on: ubuntu-latest
+    needs: [acceptance-tests]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install crane
+      uses: imjasonh/setup-crane@v0.4
+
+    - name: Install yq
+      uses: mikefarah/yq@v4
+
+    - name: Extract tested tasks from bundle
+      run: ./hack/extract-tested-tasks.sh quay.io/conforma/tekton-task:latest /tmp/catalog-tasks
+
+    - name: Checkout tekton-catalog
+      uses: actions/checkout@v4
+      with:
+        repository: conforma/tekton-catalog
+        ref: konflux
+        path: tekton-catalog
+        token: ${{ secrets.TEKTON_CATALOG_TOKEN }}
+
+    - name: Update task definitions
+      run: |
+        set -euo pipefail
+
+        # Copy extracted tasks into the catalog
+        cp -r /tmp/catalog-tasks/tasks/* tekton-catalog/tasks/
+
+        # Check if there are changes
+        cd tekton-catalog
+        if git diff --quiet && git diff --cached --quiet; then
+          echo "No changes to task definitions"
+          echo "CHANGES=false" >> "$GITHUB_ENV"
+        else
+          echo "Task definitions updated"
+          echo "CHANGES=true" >> "$GITHUB_ENV"
+        fi
+
+    - name: Create PR
+      if: env.CHANGES == 'true'
+      env:
+        GH_TOKEN: ${{ secrets.TEKTON_CATALOG_TOKEN }}
+      run: |
+        set -euo pipefail
+
+        cd tekton-catalog
+
+        BRANCH_NAME="update-tested-tasks"
+        git checkout -b "${BRANCH_NAME}"
+
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git config user.name "github-actions[bot]"
+
+        git add tasks/
+        git commit -m "Update task definitions from tested bundle"
+
+        git push --force origin "${BRANCH_NAME}"
+
+        # Create PR if one doesn't already exist
+        gh pr create \
+          --base konflux \
+          --title "Update tested task definitions" \
+          --body "Automated update of task definitions extracted from \`quay.io/conforma/tekton-task:latest\` after acceptance tests passed." \
+          --repo conforma/tekton-catalog \
+          || true
