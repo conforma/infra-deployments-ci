@@ -94,7 +94,8 @@ for bundle in "${!BUNDLE_MAP[@]}"; do
         # Get version from task labels
         VERSION=$(echo "$TASK_YAML" | yq eval '.metadata.labels["app.kubernetes.io/version"]' -)
         if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
-            VERSION="0.1"
+            echo "ERROR: Task $task_name is missing the app.kubernetes.io/version label"
+            exit 1
         fi
 
         # Create catalog directory structure
