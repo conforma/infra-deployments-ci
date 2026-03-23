@@ -15,75 +15,96 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Extracts tested task definitions from a Tekton bundle and arranges them
+# Extracts tested task definitions from Tekton bundles and arranges them
 # in the tekton-catalog directory layout: tasks/<task-name>/<version>/<task-name>.yaml
 #
-# Task names are determined by parsing the acceptance pipeline YAML files
-# for bundle resolver taskRefs. Only tasks that are referenced in acceptance
-# pipelines (and therefore tested) are extracted.
+# Bundle URLs and task names are determined by parsing the acceptance pipeline
+# YAML files for bundle resolver taskRefs. Only tasks that are referenced in
+# acceptance pipelines (and therefore tested) are extracted.
 #
 # Usage:
-#   extract-tested-tasks.sh <bundle> <output-dir>
+#   extract-tested-tasks.sh <output-dir>
 
 set -euo pipefail
 
-BUNDLE="${1:?Usage: extract-tested-tasks.sh <bundle> <output-dir>}"
-OUTPUT_DIR="${2:?Usage: extract-tested-tasks.sh <bundle> <output-dir>}"
+OUTPUT_DIR="${1:?Usage: extract-tested-tasks.sh <output-dir>}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-# Parse acceptance pipeline YAML files to find task names referenced via bundle resolver
-TASK_NAMES=()
+# Parse acceptance pipeline YAML files to find bundle URLs and task names
+# Each entry is "bundle|task_name"
+BUNDLE_TASKS=()
 for pipeline_file in "${REPO_ROOT}"/acceptance/conforma*.yaml; do
     [ -f "$pipeline_file" ] || continue
-    names=$(yq eval '.spec.tasks[] | select(.taskRef.resolver == "bundles") | .taskRef.params[] | select(.name == "name") | .value' "$pipeline_file")
-    for name in $names; do
-        TASK_NAMES+=("$name")
+    # Extract bundle URL and task name pairs from bundle resolver taskRefs
+    entries=$(yq eval '
+        .spec.tasks[] |
+        select(.taskRef.resolver == "bundles") |
+        (.taskRef.params[] | select(.name == "bundle") | .value) as $bundle |
+        (.taskRef.params[] | select(.name == "name") | .value) as $name |
+        $bundle + "|" + $name
+    ' "$pipeline_file")
+    for entry in $entries; do
+        BUNDLE_TASKS+=("$entry")
     done
 done
 
 # Deduplicate
-mapfile -t TASK_NAMES < <(printf '%s\n' "${TASK_NAMES[@]}" | sort -u)
+mapfile -t BUNDLE_TASKS < <(printf '%s\n' "${BUNDLE_TASKS[@]}" | sort -u)
 
-if [ ${#TASK_NAMES[@]} -eq 0 ]; then
-    echo "ERROR: No task names found in acceptance pipeline files"
+if [ ${#BUNDLE_TASKS[@]} -eq 0 ]; then
+    echo "ERROR: No bundle task references found in acceptance pipeline files"
     exit 1
 fi
 
-echo "Tasks to extract: ${TASK_NAMES[*]}"
-
-# Get bundle manifest
-MANIFEST=$(crane manifest "$BUNDLE")
-
-# Extract each task
-for task_name in "${TASK_NAMES[@]}"; do
-    echo "Extracting task: $task_name"
-
-    # Find the layer with matching name and kind annotations
-    DIGEST=$(echo "$MANIFEST" | jq -r --arg name "$task_name" \
-        '.layers[] | select(.annotations["dev.tekton.image.name"] == $name and .annotations["dev.tekton.image.kind"] == "task") | .digest')
-
-    if [ -z "$DIGEST" ]; then
-        echo "ERROR: Task $task_name not found in bundle $BUNDLE"
-        exit 1
-    fi
-
-    # Extract the task YAML (layers are tar+gzip encoded)
-    TASK_YAML=$(crane blob "${BUNDLE}@${DIGEST}" | gunzip | tar -xO)
-
-    # Get version from task labels
-    VERSION=$(echo "$TASK_YAML" | yq eval '.metadata.labels["app.kubernetes.io/version"]' -)
-    if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
-        VERSION="0.1"
-    fi
-
-    # Create catalog directory structure
-    TASK_DIR="${OUTPUT_DIR}/tasks/${task_name}/${VERSION}"
-    mkdir -p "$TASK_DIR"
-    echo "$TASK_YAML" | yq eval '.' -P - > "${TASK_DIR}/${task_name}.yaml"
-
-    echo "Written to ${TASK_DIR}/${task_name}.yaml"
+# Group tasks by bundle for efficient extraction
+declare -A BUNDLE_MAP
+for entry in "${BUNDLE_TASKS[@]}"; do
+    bundle="${entry%%|*}"
+    task_name="${entry##*|}"
+    BUNDLE_MAP["$bundle"]+="${task_name} "
+    echo "Found: bundle=${bundle} task=${task_name}"
 done
 
-echo "Done. Extracted ${#TASK_NAMES[@]} task(s) to ${OUTPUT_DIR}"
+# Extract tasks from each bundle
+for bundle in "${!BUNDLE_MAP[@]}"; do
+    read -ra task_names <<< "${BUNDLE_MAP[$bundle]}"
+    echo ""
+    echo "Processing bundle: $bundle"
+    echo "  Tasks: ${task_names[*]}"
+
+    MANIFEST=$(crane manifest "$bundle")
+
+    for task_name in "${task_names[@]}"; do
+        echo "  Extracting task: $task_name"
+
+        # Find the layer with matching name and kind annotations
+        DIGEST=$(echo "$MANIFEST" | jq -r --arg name "$task_name" \
+            '.layers[] | select(.annotations["dev.tekton.image.name"] == $name and .annotations["dev.tekton.image.kind"] == "task") | .digest')
+
+        if [ -z "$DIGEST" ]; then
+            echo "ERROR: Task $task_name not found in bundle $bundle"
+            exit 1
+        fi
+
+        # Extract the task YAML (layers are tar+gzip encoded)
+        TASK_YAML=$(crane blob "${bundle}@${DIGEST}" | gunzip | tar -xO)
+
+        # Get version from task labels
+        VERSION=$(echo "$TASK_YAML" | yq eval '.metadata.labels["app.kubernetes.io/version"]' -)
+        if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+            VERSION="0.1"
+        fi
+
+        # Create catalog directory structure
+        TASK_DIR="${OUTPUT_DIR}/tasks/${task_name}/${VERSION}"
+        mkdir -p "$TASK_DIR"
+        echo "$TASK_YAML" | yq eval '.' -P - > "${TASK_DIR}/${task_name}.yaml"
+
+        echo "  Written to ${TASK_DIR}/${task_name}.yaml"
+    done
+done
+
+echo ""
+echo "Done. Extracted ${#BUNDLE_TASKS[@]} task(s) to ${OUTPUT_DIR}"

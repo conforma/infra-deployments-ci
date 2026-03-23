@@ -37,6 +37,11 @@ jobs:
 
     steps:
 
+    - uses: actions/checkout@v4
+
+    - name: Install yq
+      uses: mikefarah/yq@v4
+
     - name: Log in to quay.io/enterprise-contract
       uses: redhat-actions/podman-login@v1
       with:
@@ -73,14 +78,16 @@ jobs:
           echo "Image digest: $(cat image.digest)"
         done
 
-    - name: Tag latest tekton-task
+    - name: Tag tested tekton-task bundles
       run: |
         set -euo pipefail
 
-        echo "Updating quay.io/conforma/tekton-task:konflux"
-        skopeo copy --all --digestfile image.digest \
-          docker://quay.io/conforma/tekton-task:latest docker://quay.io/conforma/tekton-task:konflux
-        echo "Image digest: $(cat image.digest)"
+        ./hack/tested-bundle-urls.sh | while read -r bundle; do
+          echo "Updating ${bundle} → ${bundle%:*}:konflux"
+          skopeo copy --all --digestfile image.digest \
+            "docker://${bundle}" "docker://${bundle%:*}:konflux"
+          echo "Image digest: $(cat image.digest)"
+        done
 
   tekton-catalog-release:
     runs-on: ubuntu-latest
@@ -95,8 +102,8 @@ jobs:
     - name: Install yq
       uses: mikefarah/yq@v4
 
-    - name: Extract tested tasks from bundle
-      run: ./hack/extract-tested-tasks.sh quay.io/conforma/tekton-task:latest /tmp/catalog-tasks
+    - name: Extract tested tasks from bundles
+      run: ./hack/extract-tested-tasks.sh /tmp/catalog-tasks
 
     - name: Checkout tekton-catalog
       uses: actions/checkout@v4
@@ -147,6 +154,6 @@ jobs:
         gh pr create \
           --base konflux \
           --title "Update tested task definitions" \
-          --body "Automated update of task definitions extracted from \`quay.io/conforma/tekton-task:latest\` after acceptance tests passed." \
+          --body "Automated update of task definitions extracted from tested bundles after acceptance tests passed." \
           --repo conforma/tekton-catalog \
           || true
