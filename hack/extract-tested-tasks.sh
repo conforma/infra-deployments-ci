@@ -110,7 +110,7 @@ for bundle in "${!BUNDLE_MAP[@]}"; do
         # Extract the task YAML (layers are tar+gzip encoded)
         # Strip any existing tag or digest from the bundle reference to get the repo
         REPO="${bundle%%@*}"
-        REPO="${REPO%%:*}"
+        REPO="${REPO%:*}"
         TASK_YAML=$(crane blob "${REPO}@${DIGEST}" | gunzip | tar -xO)
 
         # Get version from task labels

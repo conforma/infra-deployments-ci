@@ -33,11 +33,11 @@ A single GitHub Actions workflow (`konflux-policy.yaml`) runs on a schedule and 
         └───────────────────┘  └───────────────────────┘
 ```
 
-**Job 1 — Acceptance Tests:** Spins up a KinD cluster, installs Tekton and a local OCI registry, then runs all test scenarios against the latest bundle. Both `verify-enterprise-contract` and `verify-conforma-konflux-ta` tasks are tested.
+**Job 1 — Acceptance Tests:** Resolves bundle digests (pinning the exact image), spins up a KinD cluster with Tekton and a local OCI registry, then runs all test scenarios. Both `verify-enterprise-contract` and `verify-conforma-konflux-ta` tasks are tested. The pinned digests are passed as outputs to downstream jobs.
 
-**Job 2 — Tag (runs after tests pass):** Tags `:latest` policy bundles and the tekton-task bundle to `:konflux`, promoting them for use in Konflux.
+**Job 2 — Tag (runs after tests pass):** Tags the pinned bundle digest and `:latest` policy bundles to `:konflux`, promoting them for use in Konflux. Uses the exact digest from Job 1 to avoid race conditions where `:latest` could change between test and tag.
 
-**Job 3 — Tekton Catalog Release (runs after tests pass):** Extracts the tested task definitions from the bundle, formats them as YAML, and creates a PR to the `konflux` branch of `conforma/tekton-catalog`.
+**Job 3 — Tekton Catalog Release (runs after tag):** Extracts the tested task definitions from the pinned bundle digest, formats them as YAML, and creates a PR to the `konflux` branch of `conforma/tekton-catalog`.
 
 ### Adding a New Task to the Release
 
@@ -60,13 +60,19 @@ The `verify-conforma-konflux-ta` task uses Trusted Artifacts — it expects its 
 
 This exercises the real Trusted Artifacts flow with no shortcuts.
 
+### Digest Pinning
+
+Before tests run, `hack/resolve-bundle-digests.sh` resolves each bundle URL to its current digest (e.g. `quay.io/conforma/tekton-task:latest` → `quay.io/conforma/tekton-task@sha256:abc...`). This digest is passed as a job output to the tag and extract jobs, ensuring the exact image that was tested is what gets tagged and extracted — even if `:latest` is updated during the workflow run.
+
 ### Task Extraction from Bundle
 
 The script `hack/extract-tested-tasks.sh`:
 
 1. Parses the acceptance pipeline YAMLs to find which task names are referenced via bundle resolver
-2. Pulls the bundle manifest and extracts matching task layers using `crane`
-3. Formats the YAML and writes to the catalog layout: `tasks/<task-name>/<version>/<task-name>.yaml`
+2. When `BUNDLE_DIGESTS` is set, uses the pinned digest instead of the tag from the pipeline YAML
+3. Pulls the bundle manifest and extracts matching task layers using `crane`
+4. Fails if a task is missing the `app.kubernetes.io/version` label
+5. Writes to the catalog layout: `tasks/<task-name>/<version>/<task-name>.yaml`
 
 ## Files
 
@@ -79,4 +85,6 @@ The script `hack/extract-tested-tasks.sh`:
 | `acceptance/prepare-snapshot.yaml` | Task that creates a Trusted Artifact from snapshot JSON |
 | `hack/registry/` | Local OCI registry deployment for KinD |
 | `hack/extract-tested-tasks.sh` | Extracts tested tasks from bundle in catalog layout |
+| `hack/tested-bundle-urls.sh` | Outputs unique bundle URLs from pipeline definitions |
+| `hack/resolve-bundle-digests.sh` | Resolves bundle URLs to pinned digests |
 | `.github/workflows/konflux-policy.yaml` | Single workflow: test → tag + release |

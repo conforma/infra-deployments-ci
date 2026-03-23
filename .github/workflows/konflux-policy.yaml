@@ -52,11 +52,6 @@ jobs:
 
     steps:
 
-    - uses: actions/checkout@v4
-
-    - name: Install yq
-      uses: mikefarah/yq@v4
-
     - name: Log in to quay.io/enterprise-contract
       uses: redhat-actions/podman-login@v1
       with:
@@ -100,7 +95,7 @@ jobs:
         set -euo pipefail
 
         echo "$BUNDLE_DIGESTS" | jq -r 'to_entries[] | "\(.key)|\(.value)"' | while IFS='|' read -r url pinned; do
-          repo="${url%%:*}"
+          repo="${url%:*}"
           echo "Tagging ${pinned} → ${repo}:konflux"
           skopeo copy --all --digestfile image.digest \
             "docker://${pinned}" "docker://${repo}:konflux"

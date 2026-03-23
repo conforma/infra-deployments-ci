@@ -36,7 +36,7 @@ BUNDLE_URLS=$("${SCRIPT_DIR}/tested-bundle-urls.sh")
 RESULT="{}"
 for url in $BUNDLE_URLS; do
     digest=$(crane digest "$url")
-    pinned="${url%%:*}@${digest}"
+    pinned="${url%:*}@${digest}"
     RESULT=$(echo "$RESULT" | jq --arg url "$url" --arg pinned "$pinned" '. + {($url): $pinned}')
     echo "Resolved ${url} → ${pinned}" >&2
 done
