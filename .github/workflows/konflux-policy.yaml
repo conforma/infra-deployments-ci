@@ -36,11 +36,11 @@ jobs:
       with:
         install_only: true
 
-    - name: Resolve bundle digests
+    - name: Resolve tested image digests
       id: resolve-digests
       run: |
         set -euo pipefail
-        DIGESTS=$(./hack/resolve-bundle-digests.sh)
+        DIGESTS=$(./hack/resolve-tested-digests.sh)
         echo "bundle-digests=${DIGESTS}" >> "$GITHUB_OUTPUT"
 
     - name: Run acceptance tests

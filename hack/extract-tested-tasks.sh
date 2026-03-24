@@ -32,7 +32,7 @@
 #
 # Environment:
 #   BUNDLE_DIGESTS - Optional JSON object mapping bundle URLs to digest-pinned
-#                    references (e.g. from resolve-bundle-digests.sh)
+#                    references (e.g. from resolve-tested-digests.sh)
 
 set -euo pipefail
 
@@ -109,7 +109,7 @@ for bundle in "${!BUNDLE_MAP[@]}"; do
 
         # Extract the task YAML (layers are tar+gzip encoded)
         # Strip any existing tag or digest from the bundle reference to get the repo
-        REPO="${bundle%%@*}"
+        REPO="${bundle%@*}"
         REPO="${REPO%:*}"
         TASK_YAML=$(crane blob "${REPO}@${DIGEST}" | gunzip | tar -xO)
 
