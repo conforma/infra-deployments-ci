@@ -120,55 +120,44 @@ jobs:
         BUNDLE_DIGESTS: ${{ needs.acceptance-tests.outputs.bundle-digests }}
       run: ./hack/extract-tested-tasks.sh /tmp/catalog-tasks
 
+    - name: Generate token
+      id: app-token
+      uses: actions/create-github-app-token@v1
+      with:
+        app-id: ${{ secrets.EC_AUTOMATION_APP_ID }}
+        private-key: ${{ secrets.EC_AUTOMATION_KEY }}
+        owner: conforma
+        repositories: tekton-catalog
+
     - name: Checkout tekton-catalog
       uses: actions/checkout@v4
       with:
         repository: conforma/tekton-catalog
         ref: konflux
         path: tekton-catalog
-        token: ${{ secrets.TEKTON_CATALOG_TOKEN }}
+        token: ${{ steps.app-token.outputs.token }}
 
-    - name: Update task definitions
+    - name: Push task definitions to konflux branch
       run: |
         set -euo pipefail
+
+        cd tekton-catalog
+
+        # Pull latest to ensure we're up to date
+        git pull --rebase origin konflux
 
         # Copy extracted tasks into the catalog
-        cp -r /tmp/catalog-tasks/tasks/* tekton-catalog/tasks/
+        cp -r /tmp/catalog-tasks/tasks/* tasks/
 
         # Check if there are changes
-        cd tekton-catalog
-        if git diff --quiet && git diff --cached --quiet; then
+        if git diff --quiet; then
           echo "No changes to task definitions"
-          echo "CHANGES=false" >> "$GITHUB_ENV"
-        else
-          echo "Task definitions updated"
-          echo "CHANGES=true" >> "$GITHUB_ENV"
+          exit 0
         fi
-
-    - name: Create PR
-      if: env.CHANGES == 'true'
-      env:
-        GH_TOKEN: ${{ secrets.TEKTON_CATALOG_TOKEN }}
-      run: |
-        set -euo pipefail
-
-        cd tekton-catalog
-
-        BRANCH_NAME="update-tested-tasks"
-        git checkout -b "${BRANCH_NAME}"
 
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git config user.name "github-actions[bot]"
 
         git add tasks/
         git commit -m "Update task definitions from tested bundle"
-
-        git push --force origin "${BRANCH_NAME}"
-
-        # Create PR if one doesn't already exist
-        gh pr create \
-          --base konflux \
-          --title "Update tested task definitions" \
-          --body "Automated update of task definitions extracted from tested bundles after acceptance tests passed." \
-          --repo conforma/tekton-catalog \
-          || true
+        git push origin konflux

@@ -37,7 +37,7 @@ A single GitHub Actions workflow (`konflux-policy.yaml`) runs on a schedule and 
 
 **Job 2 — Tag (runs after tests pass):** Tags the pinned bundle digest and `:latest` policy bundles to `:konflux`, promoting them for use in Konflux. Uses the exact digest from Job 1 to avoid race conditions where `:latest` could change between test and tag.
 
-**Job 3 — Tekton Catalog Release (runs after tag):** Extracts the tested task definitions from the pinned bundle digest, formats them as YAML, and creates a PR to the `konflux` branch of `conforma/tekton-catalog`.
+**Job 3 — Tekton Catalog Release (runs after tag):** Extracts the tested task definitions from the pinned bundle digest, formats them as YAML, and pushes directly to the `konflux` branch of `conforma/tekton-catalog` (rebasing on latest first).
 
 ### Adding a New Task to the Release
 
