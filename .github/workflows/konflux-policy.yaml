@@ -143,9 +143,6 @@ jobs:
 
         cd tekton-catalog
 
-        # Pull latest to ensure we're up to date
-        git pull --rebase origin konflux
-
         # Copy extracted tasks into the catalog
         cp -r /tmp/catalog-tasks/tasks/* tasks/
 
