@@ -159,5 +159,7 @@ jobs:
         git config user.name "github-actions[bot]"
 
         git add tasks/
-        git commit -m "Update task definitions from tested bundle"
+        git commit -m "Update task definitions from tested bundle
+
+${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
         git push origin konflux
