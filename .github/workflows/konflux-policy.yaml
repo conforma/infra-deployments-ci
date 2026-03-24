@@ -88,7 +88,7 @@ jobs:
           echo "Image digest: $(cat image.digest)"
         done
 
-    - name: Tag tested tekton-task bundles by digest
+    - name: Tag tested images by digest
       env:
         BUNDLE_DIGESTS: ${{ needs.acceptance-tests.outputs.bundle-digests }}
       run: |

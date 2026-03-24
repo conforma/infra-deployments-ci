@@ -16,14 +16,18 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Resolves each unique bundle URL referenced in acceptance pipeline definitions
-# to its current digest. Outputs a JSON object mapping bundle URL to
-# "url@digest" for use in downstream CI jobs.
+# to its current digest, and extracts the CLI image reference from the bundle.
+# Outputs a JSON object mapping image URL to pinned "repo@digest" for use in
+# downstream CI jobs.
 #
 # Usage:
 #   resolve-bundle-digests.sh
 #
 # Output (JSON):
-#   {"quay.io/conforma/tekton-task:latest":"quay.io/conforma/tekton-task@sha256:abc123..."}
+#   {
+#     "quay.io/conforma/tekton-task:latest": "quay.io/conforma/tekton-task@sha256:abc...",
+#     "quay.io/conforma/cli": "quay.io/conforma/cli@sha256:def..."
+#   }
 
 set -euo pipefail
 
@@ -40,5 +44,12 @@ for url in $BUNDLE_URLS; do
     RESULT=$(echo "$RESULT" | jq --arg url "$url" --arg pinned "$pinned" '. + {($url): $pinned}')
     echo "Resolved ${url} → ${pinned}" >&2
 done
+
+# Extract the CLI image from the first bundle and add it to the map
+FIRST_BUNDLE=$(echo "$RESULT" | jq -r 'to_entries[0].value')
+CLI_IMAGE=$("${SCRIPT_DIR}/resolve-cli-image.sh" "$FIRST_BUNDLE")
+CLI_REPO="${CLI_IMAGE%@*}"
+CLI_REPO="${CLI_REPO%:*}"
+RESULT=$(echo "$RESULT" | jq --arg url "$CLI_REPO" --arg pinned "$CLI_IMAGE" '. + {($url): $pinned}')
 
 echo "$RESULT"
