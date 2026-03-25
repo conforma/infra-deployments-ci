@@ -86,9 +86,17 @@ if [ -z "$CLI_IMAGE" ] || [ "$CLI_IMAGE" = "null" ]; then
     exit 1
 fi
 
-CLI_REPO="${CLI_IMAGE%@*}"
+# Ensure the CLI image is digest-pinned
+if [[ "$CLI_IMAGE" == *@sha256:* ]]; then
+    CLI_PINNED="$CLI_IMAGE"
+else
+    cli_digest=$(crane digest "$CLI_IMAGE")
+    CLI_PINNED="${CLI_IMAGE%:*}@${cli_digest}"
+fi
+
+CLI_REPO="${CLI_PINNED%@*}"
 CLI_REPO="${CLI_REPO%:*}"
-RESULT=$(echo "$RESULT" | jq --arg url "$CLI_REPO" --arg pinned "$CLI_IMAGE" '. + {($url): $pinned}')
-echo "Resolved CLI image: ${CLI_IMAGE}" >&2
+RESULT=$(echo "$RESULT" | jq --arg url "$CLI_REPO" --arg pinned "$CLI_PINNED" '. + {($url): $pinned}')
+echo "Resolved CLI image: ${CLI_PINNED}" >&2
 
 echo "$RESULT"
