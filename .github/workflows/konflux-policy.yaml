@@ -88,6 +88,17 @@ jobs:
           echo "Image digest: $(cat image.digest)"
         done
 
+    - name: Tag latest build task policy
+      run: |
+        set -euo pipefail
+
+        for repo in enterprise-contract/ec-build_task-policy conforma/build-task-policy; do
+          echo "Updating quay.io/${repo}:konflux"
+          skopeo copy --all --digestfile image.digest \
+            docker://quay.io/${repo}:latest docker://quay.io/${repo}:konflux
+          echo "Image digest: $(cat image.digest)"
+        done
+
     - name: Tag tested images by digest
       env:
         BUNDLE_DIGESTS: ${{ needs.acceptance-tests.outputs.bundle-digests }}
