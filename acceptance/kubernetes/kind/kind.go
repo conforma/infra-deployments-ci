@@ -198,6 +198,14 @@ func Start(givenCtx context.Context) (context.Context, error) {
 			return
 		}
 
+		// Wait for local OCI registry to be ready
+		logger.Log("Waiting for local OCI registry to be ready...")
+		createErr = waitForDeploymentsIn(ctx, &kCluster, "registry")
+		if createErr != nil {
+			logger.Errorf("Local OCI registry not ready: %v", createErr)
+			return
+		}
+
 		globalCluster = &kCluster
 		logger.Log("Kind cluster ready: %s", kCluster.name)
 	})

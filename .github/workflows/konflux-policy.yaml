@@ -14,6 +14,8 @@ permissions:
 jobs:
   acceptance-tests:
     runs-on: ubuntu-latest
+    outputs:
+      bundle-digests: ${{ steps.resolve-digests.outputs.bundle-digests }}
 
     steps:
     - uses: actions/checkout@v4
@@ -23,10 +25,23 @@ jobs:
       with:
         go-version-file: acceptance/go.mod
 
+    - name: Install crane
+      uses: imjasonh/setup-crane@v0.4
+
+    - name: Install yq
+      uses: mikefarah/yq@v4
+
     - name: Install kind
       uses: helm/kind-action@v1
       with:
         install_only: true
+
+    - name: Resolve tested image digests
+      id: resolve-digests
+      run: |
+        set -euo pipefail
+        DIGESTS=$(./hack/resolve-tested-digests.sh | jq -c .)
+        echo "bundle-digests=${DIGESTS}" >> "$GITHUB_OUTPUT"
 
     - name: Run acceptance tests
       run: make acceptance
@@ -73,11 +88,74 @@ jobs:
           echo "Image digest: $(cat image.digest)"
         done
 
-    - name: Tag latest tekton-task
+    - name: Tag tested images by digest
+      env:
+        BUNDLE_DIGESTS: ${{ needs.acceptance-tests.outputs.bundle-digests }}
       run: |
         set -euo pipefail
 
-        echo "Updating quay.io/conforma/tekton-task:konflux"
-        skopeo copy --all --digestfile image.digest \
-          docker://quay.io/conforma/tekton-task:latest docker://quay.io/conforma/tekton-task:konflux
-        echo "Image digest: $(cat image.digest)"
+        echo "$BUNDLE_DIGESTS" | jq -r 'to_entries[] | "\(.key)|\(.value)"' | while IFS='|' read -r url pinned; do
+          repo="${url%:*}"
+          echo "Tagging ${pinned} → ${repo}:konflux"
+          skopeo copy --all --digestfile image.digest \
+            "docker://${pinned}" "docker://${repo}:konflux"
+          echo "Image digest: $(cat image.digest)"
+        done
+
+  tekton-catalog-release:
+    runs-on: ubuntu-latest
+    needs: [acceptance-tests, tag]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install crane
+      uses: imjasonh/setup-crane@v0.4
+
+    - name: Install yq
+      uses: mikefarah/yq@v4
+
+    - name: Extract tested tasks from pinned bundle digests
+      env:
+        BUNDLE_DIGESTS: ${{ needs.acceptance-tests.outputs.bundle-digests }}
+      run: ./hack/extract-tested-tasks.sh /tmp/catalog-tasks
+
+    - name: Generate token
+      id: app-token
+      uses: actions/create-github-app-token@v1
+      with:
+        app-id: ${{ secrets.EC_AUTOMATION_APP_ID }}
+        private-key: ${{ secrets.EC_AUTOMATION_KEY }}
+        owner: conforma
+        repositories: tekton-catalog
+
+    - name: Checkout tekton-catalog
+      uses: actions/checkout@v4
+      with:
+        repository: conforma/tekton-catalog
+        ref: konflux
+        path: tekton-catalog
+        token: ${{ steps.app-token.outputs.token }}
+
+    - name: Push task definitions to konflux branch
+      run: |
+        set -euo pipefail
+
+        cd tekton-catalog
+
+        # Copy extracted tasks into the catalog
+        cp -r /tmp/catalog-tasks/tasks/* tasks/
+
+        git add tasks/
+
+        # Check if there are staged changes
+        if git diff --cached --quiet; then
+          echo "No changes to task definitions"
+          exit 0
+        fi
+
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+        git config user.name "github-actions[bot]"
+        git commit -m "Update task definitions from tested bundle" \
+          -m "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+        git push origin konflux

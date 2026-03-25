@@ -59,12 +59,14 @@ func (t testState) Key() any {
 }
 
 type pipelineKey struct{}
+type tasksKey struct{}
 
 // AddStepsTo adds cluster-related steps to the scenario context
 func AddStepsTo(sc *godog.ScenarioContext) {
 	// Cluster setup
 	sc.Step(`^a cluster running$`, startCluster)
 	sc.Step(`^the conforma pipeline using task bundle "([^"]*)"$`, installPipelineWithBundle)
+	sc.Step(`^the conforma-ta pipeline using task bundle "([^"]*)"$`, installTAPipelineWithBundle)
 	sc.Step(`^a working namespace$`, createNamespace)
 	sc.Step(`^a policy configuration with content:$`, createPolicy)
 	sc.Step(`^the conforma pipeline is run with:$`, runPipeline)
@@ -93,24 +95,19 @@ func startCluster(ctx context.Context) (context.Context, error) {
 	return kind.Start(ctx)
 }
 
-func installPipelineWithBundle(ctx context.Context, taskBundle string) (context.Context, error) {
-	logger, ctx := log.LoggerFor(ctx)
-	logger.Log("Installing conforma pipeline with task bundle: %s", taskBundle)
-
-	// Read the pipeline definition
-	repoRoot := testenv.RepoRoot(ctx)
-	pipelineYaml, err := os.ReadFile(filepath.Join(repoRoot, "acceptance", "conforma.yaml"))
+// loadPipelineWithBundle reads a pipeline YAML file and updates any bundle
+// resolver taskRefs to use the given task bundle.
+func loadPipelineWithBundle(repoRoot, filename, taskBundle string) (*pipeline.Pipeline, error) {
+	pipelineYaml, err := os.ReadFile(filepath.Join(repoRoot, "acceptance", filename))
 	if err != nil {
-		return ctx, fmt.Errorf("reading pipeline file: %w", err)
+		return nil, fmt.Errorf("reading pipeline file %s: %w", filename, err)
 	}
 
-	// Parse the pipeline
 	var pipelineObj pipeline.Pipeline
 	if err := yaml.Unmarshal(pipelineYaml, &pipelineObj); err != nil {
-		return ctx, fmt.Errorf("parsing pipeline: %w", err)
+		return nil, fmt.Errorf("parsing pipeline %s: %w", filename, err)
 	}
 
-	// Update the task bundle reference in taskRef resolver params
 	for i := range pipelineObj.Spec.Tasks {
 		task := &pipelineObj.Spec.Tasks[i]
 		if task.TaskRef != nil && task.TaskRef.Resolver == "bundles" {
@@ -125,10 +122,51 @@ func installPipelineWithBundle(ctx context.Context, taskBundle string) (context.
 		}
 	}
 
-	// Store pipeline for later use in namespace creation
-	ctx = context.WithValue(ctx, pipelineKey{}, &pipelineObj)
+	return &pipelineObj, nil
+}
+
+func installPipelineWithBundle(ctx context.Context, taskBundle string) (context.Context, error) {
+	logger, ctx := log.LoggerFor(ctx)
+	logger.Log("Installing conforma pipeline with task bundle: %s", taskBundle)
+
+	pipelineObj, err := loadPipelineWithBundle(testenv.RepoRoot(ctx), "conforma.yaml", taskBundle)
+	if err != nil {
+		return ctx, err
+	}
+
+	ctx = context.WithValue(ctx, pipelineKey{}, pipelineObj)
 
 	logger.Log("Pipeline loaded: %s", pipelineObj.Name)
+	return ctx, nil
+}
+
+func installTAPipelineWithBundle(ctx context.Context, taskBundle string) (context.Context, error) {
+	logger, ctx := log.LoggerFor(ctx)
+	logger.Log("Installing conforma-ta pipeline with task bundle: %s", taskBundle)
+
+	repoRoot := testenv.RepoRoot(ctx)
+
+	pipelineObj, err := loadPipelineWithBundle(repoRoot, "conforma-ta.yaml", taskBundle)
+	if err != nil {
+		return ctx, err
+	}
+
+	ctx = context.WithValue(ctx, pipelineKey{}, pipelineObj)
+
+	// Read and parse the prepare-snapshot task
+	taskYaml, err := os.ReadFile(filepath.Join(repoRoot, "acceptance", "prepare-snapshot.yaml"))
+	if err != nil {
+		return ctx, fmt.Errorf("reading prepare-snapshot task file: %w", err)
+	}
+
+	var taskObj pipeline.Task
+	if err := yaml.Unmarshal(taskYaml, &taskObj); err != nil {
+		return ctx, fmt.Errorf("parsing prepare-snapshot task: %w", err)
+	}
+
+	ctx = context.WithValue(ctx, tasksKey{}, []*pipeline.Task{&taskObj})
+
+	logger.Log("TA pipeline loaded: %s (with task: %s)", pipelineObj.Name, taskObj.Name)
 	return ctx, nil
 }
 
@@ -231,14 +269,28 @@ func createNamespace(ctx context.Context) (context.Context, error) {
 
 	logger.Log("Created public key secret")
 
-	// Install pipeline in namespace
+	// Install Tekton resources (tasks and pipeline) in namespace
+	tektonClient, err := tekton.NewForConfig(config)
+	if err != nil {
+		return ctx, fmt.Errorf("creating tekton client: %w", err)
+	}
+
+	// Install additional tasks (e.g. prepare-snapshot for TA tests)
+	if tasks, ok := ctx.Value(tasksKey{}).([]*pipeline.Task); ok {
+		for _, taskObj := range tasks {
+			taskCopy := taskObj.DeepCopy()
+			taskCopy.Namespace = ns.Name
+			_, err = tektonClient.Tasks(ns.Name).Create(ctx, taskCopy, metav1.CreateOptions{})
+			if err != nil {
+				return ctx, fmt.Errorf("creating task %s: %w", taskObj.Name, err)
+			}
+			logger.Log("Task installed in namespace: %s/%s", ns.Name, taskObj.Name)
+		}
+	}
+
+	// Install pipeline
 	pipelineObj := ctx.Value(pipelineKey{}).(*pipeline.Pipeline)
 	if pipelineObj != nil {
-		tektonClient, err := tekton.NewForConfig(config)
-		if err != nil {
-			return ctx, fmt.Errorf("creating tekton client: %w", err)
-		}
-
 		// DeepCopy to avoid mutating the shared pipeline object, which would
 		// cause a data race if scenarios run concurrently.
 		pipelineCopy := pipelineObj.DeepCopy()
@@ -356,6 +408,12 @@ func runPipeline(ctx context.Context, params *godog.Table) (context.Context, err
 		})
 	}
 
+	// Get pipeline name from context
+	pipelineObj := ctx.Value(pipelineKey{}).(*pipeline.Pipeline)
+	if pipelineObj == nil {
+		return ctx, errors.New("pipeline not loaded")
+	}
+
 	// Create PipelineRun
 	pr, err := tektonClient.PipelineRuns(state.namespace).Create(ctx, &pipeline.PipelineRun{
 		ObjectMeta: metav1.ObjectMeta{
@@ -363,7 +421,7 @@ func runPipeline(ctx context.Context, params *godog.Table) (context.Context, err
 		},
 		Spec: pipeline.PipelineRunSpec{
 			PipelineRef: &pipeline.PipelineRef{
-				Name: "conforma",
+				Name: pipelineObj.Name,
 			},
 			Params: pipelineParams,
 			Timeouts: &pipeline.TimeoutFields{

@@ -1,0 +1,122 @@
+# Copyright The Conforma Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Pipeline that tests the verify-conforma-konflux-ta task using Trusted Artifacts.
+# A prepare-snapshot task writes the snapshot JSON and pushes it as a trusted artifact
+# to a local OCI registry. The verify task then fetches and validates it.
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: conforma-ta
+spec:
+  params:
+    - name: SNAPSHOT
+      type: string
+      description: |
+        Spec section of an ApplicationSnapshot resource. Not all fields of the
+        resource are required. A minimal example:
+          {
+            "components": [
+              {
+                "containerImage": "quay.io/example/repo:latest"
+              }
+            ]
+          }
+        Each "containerImage" in the "components" array is validated.
+    - name: POLICY_CONFIGURATION
+      type: string
+      description: |
+        Name of the policy configuration (EnterpriseContractConfiguration
+        object) to use. `namespace/name` or `name` syntax supported. If
+        namespace is omitted the namespace where the task runs is used.
+      default: conforma-service/default
+    - name: SSL_CERT_DIR
+      type: string
+      description: |
+        Path to a directory containing SSL certs to be used when communicating
+        with external services.
+      default: ""
+    - name: PUBLIC_KEY
+      type: string
+      default: ""
+      description: |
+        Public key used to verify signatures. Must be a valid k8s cosign
+        reference, e.g. k8s://my-space/my-secret where my-secret contains
+        the expected cosign.pub attribute.
+    - name: WORKERS
+      type: string
+      description: Number of parallel workers to use for policy evaluation.
+      default: "1"
+    - name: EXTRA_RULE_DATA
+      type: string
+      description: Merge additional Rego variables into the policy data. Use syntax "key=value,key2=value2..."
+      default: ""
+    - name: SINGLE_COMPONENT
+      type: string
+      description: Reduce the Snapshot to only the component whose build caused the Snapshot to be created
+      default: "false"
+    - name: STRICT
+      type: string
+      description: |
+        A boolean flag that determines whether the result of the test will mark the TaskRun as passing or not.
+      default: "false"
+  results:
+    - name: TEST_OUTPUT
+      value: "$(tasks.verify.results.TEST_OUTPUT)"
+  tasks:
+    - name: prepare-snapshot
+      params:
+        - name: SNAPSHOT
+          value: "$(params.SNAPSHOT)"
+      taskRef:
+        name: prepare-snapshot
+    - name: verify
+      params:
+        - name: SOURCE_DATA_ARTIFACT
+          value: "$(tasks.prepare-snapshot.results.SOURCE_DATA_ARTIFACT)"
+        - name: SNAPSHOT_FILENAME
+          value: snapshot.json
+        - name: POLICY_CONFIGURATION
+          value: "$(params.POLICY_CONFIGURATION)"
+        - name: PUBLIC_KEY
+          value: "$(params.PUBLIC_KEY)"
+        - name: SSL_CERT_DIR
+          value: "$(params.SSL_CERT_DIR)"
+        - name: STRICT
+          value: "$(params.STRICT)"
+        - name: IGNORE_REKOR
+          value: "true"
+        - name: WORKERS
+          value: "$(params.WORKERS)"
+        - name: EXTRA_RULE_DATA
+          value: "$(params.EXTRA_RULE_DATA)"
+        - name: SINGLE_COMPONENT
+          value: "$(params.SINGLE_COMPONENT)"
+        - name: ORAS_OPTIONS
+          value: "--plain-http"
+      taskRef:
+        resolver: bundles
+        params:
+          - name: bundle
+            value: quay.io/conforma/tekton-task:latest
+          - name: name
+            value: verify-conforma-konflux-ta
+          - name: kind
+            value: task
+      runAfter:
+        - prepare-snapshot
+      timeout: 4h
+
