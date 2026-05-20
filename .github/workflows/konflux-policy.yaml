@@ -180,8 +180,8 @@ jobs:
         fi
 
         for f in $TASK_FILES; do
-          OLD_DIGEST=$(sed -n '/- name: POLICY_BUNDLE_DIGEST$/,/- name: /{s/.*default: "\(sha256:[a-f0-9]*\)".*/\1/p;}' "$f")
-          if [ -z "$OLD_DIGEST" ]; then
+          OLD_DIGEST=$(yq eval '.spec.params[] | select(.name == "POLICY_BUNDLE_DIGEST") | .default' "$f")
+          if [ -z "$OLD_DIGEST" ] || [ "$OLD_DIGEST" = "null" ]; then
             echo "Warning: could not extract current digest from $f, skipping"
             continue
           fi
@@ -189,7 +189,7 @@ jobs:
             echo "Already up to date in $f"
             continue
           fi
-          sed -i "s|${OLD_DIGEST}|${NEW_DIGEST}|g" "$f"
+          yq eval '(.spec.params[] | select(.name == "POLICY_BUNDLE_DIGEST") | .default) = "'"${NEW_DIGEST}"'"' -i "$f"
           echo "Updated $f: ${OLD_DIGEST} → ${NEW_DIGEST}"
         done
 
