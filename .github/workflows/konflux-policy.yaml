@@ -129,8 +129,8 @@ jobs:
           echo "Image digest: $(cat image.digest)"
         done
 
-  tekton-task-bundle:
-    if: ${{ !cancelled() && !failure() && inputs.run_tekton_task_bundle != false }}
+  update-task-definitions:
+    if: ${{ !cancelled() && !failure() && (inputs.run_tekton_task_bundle != false || inputs.run_tekton_catalog != false) }}
     runs-on: ubuntu-latest
     needs: [acceptance-tests, tag]
 
@@ -142,11 +142,6 @@ jobs:
 
     - name: Install yq
       uses: mikefarah/yq@v4
-
-    - name: Install tkn
-      uses: tektoncd/actions/setup-tektoncd-cli@v1
-      with:
-        version: latest
 
     - name: Log in to quay.io/conforma
       env:
@@ -197,7 +192,39 @@ jobs:
           echo "Updated $f: ${OLD_DIGEST} → ${NEW_DIGEST}"
         done
 
-    - name: Push updated tekton-task bundle
+    - name: Upload task definitions
+      uses: actions/upload-artifact@v4
+      with:
+        name: task-definitions
+        path: /tmp/catalog-tasks/tasks/
+
+  tekton-task-bundle:
+    if: ${{ needs.update-task-definitions.result == 'success' && inputs.run_tekton_task_bundle != false }}
+    runs-on: ubuntu-latest
+    needs: [update-task-definitions]
+
+    steps:
+    - name: Install crane
+      uses: imjasonh/setup-crane@v0.4
+
+    - name: Install tkn
+      uses: tektoncd/actions/setup-tektoncd-cli@v1
+      with:
+        version: latest
+
+    - name: Log in to quay.io/conforma
+      env:
+        CONFORMA_USER: ${{ secrets.BUNDLE_PUSH_USER_CONFORMA }}
+        CONFORMA_PASS: ${{ secrets.BUNDLE_PUSH_PASS_CONFORMA }}
+      run: crane auth login quay.io -u "$CONFORMA_USER" -p "$CONFORMA_PASS"
+
+    - name: Download task definitions
+      uses: actions/download-artifact@v4
+      with:
+        name: task-definitions
+        path: /tmp/catalog-tasks/tasks/
+
+    - name: Push tekton-task bundle
       run: |
         set -euo pipefail
 
@@ -209,29 +236,16 @@ jobs:
         tkn bundle push quay.io/conforma/tekton-task:konflux "${TASK_FILES[@]}"
 
   tekton-catalog:
-    if: ${{ !cancelled() && !failure() && inputs.run_tekton_catalog != false }}
+    if: ${{ needs.update-task-definitions.result == 'success' && inputs.run_tekton_catalog != false }}
     runs-on: ubuntu-latest
-    needs: [acceptance-tests, tekton-task-bundle]
+    needs: [update-task-definitions]
 
     steps:
-    - uses: actions/checkout@v4
-
-    - name: Install crane
-      uses: imjasonh/setup-crane@v0.4
-
-    - name: Install yq
-      uses: mikefarah/yq@v4
-
-    - name: Log in to quay.io/conforma
-      env:
-        CONFORMA_USER: ${{ secrets.BUNDLE_PUSH_USER_CONFORMA }}
-        CONFORMA_PASS: ${{ secrets.BUNDLE_PUSH_PASS_CONFORMA }}
-      run: crane auth login quay.io -u "$CONFORMA_USER" -p "$CONFORMA_PASS"
-
-    - name: Extract tasks from tekton-task:konflux bundle
-      run: |
-        set -euo pipefail
-        ./hack/extract-all-bundle-tasks.sh quay.io/conforma/tekton-task:konflux /tmp/catalog-tasks
+    - name: Download task definitions
+      uses: actions/download-artifact@v4
+      with:
+        name: task-definitions
+        path: /tmp/catalog-tasks/tasks/
 
     - name: Generate token
       id: app-token
