@@ -5,7 +5,11 @@ on:
   workflow_dispatch:
     inputs:
       run_tag:
-        description: 'Tag tested images'
+        description: 'Tag tested images as :konflux'
+        type: boolean
+        default: true
+      run_tekton_task_bundle:
+        description: 'Rebuild tekton-task bundle with updated policy digest'
         type: boolean
         default: true
       run_tekton_catalog:
@@ -125,8 +129,8 @@ jobs:
           echo "Image digest: $(cat image.digest)"
         done
 
-  tekton-catalog-release:
-    if: ${{ !cancelled() && !failure() && inputs.run_tekton_catalog != false }}
+  tekton-task-bundle:
+    if: ${{ !cancelled() && !failure() && inputs.run_tekton_task_bundle != false }}
     runs-on: ubuntu-latest
     needs: [acceptance-tests, tag]
 
@@ -204,6 +208,31 @@ jobs:
 
         tkn bundle push quay.io/conforma/tekton-task:konflux "${TASK_FILES[@]}"
 
+  tekton-catalog:
+    if: ${{ !cancelled() && !failure() && inputs.run_tekton_catalog != false }}
+    runs-on: ubuntu-latest
+    needs: [acceptance-tests, tekton-task-bundle]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install crane
+      uses: imjasonh/setup-crane@v0.4
+
+    - name: Install yq
+      uses: mikefarah/yq@v4
+
+    - name: Log in to quay.io/conforma
+      env:
+        CONFORMA_USER: ${{ secrets.BUNDLE_PUSH_USER_CONFORMA }}
+        CONFORMA_PASS: ${{ secrets.BUNDLE_PUSH_PASS_CONFORMA }}
+      run: crane auth login quay.io -u "$CONFORMA_USER" -p "$CONFORMA_PASS"
+
+    - name: Extract tasks from tekton-task:konflux bundle
+      run: |
+        set -euo pipefail
+        ./hack/extract-all-bundle-tasks.sh quay.io/conforma/tekton-task:konflux /tmp/catalog-tasks
+
     - name: Generate token
       id: app-token
       uses: actions/create-github-app-token@v1
@@ -227,12 +256,10 @@ jobs:
 
         cd tekton-catalog
 
-        # Copy extracted tasks into the catalog
         cp -r /tmp/catalog-tasks/tasks/* tasks/
 
         git add tasks/
 
-        # Check if there are staged changes
         if git diff --cached --quiet; then
           echo "No changes to task definitions"
           exit 0
