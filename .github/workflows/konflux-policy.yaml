@@ -166,31 +166,7 @@ jobs:
         ./hack/extract-all-bundle-tasks.sh "$BUNDLE" /tmp/catalog-tasks
 
     - name: Update policy bundle digest in task definitions
-      run: |
-        set -euo pipefail
-
-        NEW_DIGEST=$(crane digest quay.io/conforma/release-policy:konflux)
-        echo "Release policy digest: ${NEW_DIGEST}"
-
-        TASK_FILES=$(grep -rl 'POLICY_BUNDLE_DIGEST' /tmp/catalog-tasks/tasks/ || true)
-        if [ -z "$TASK_FILES" ]; then
-          echo "ERROR: No task files contain POLICY_BUNDLE_DIGEST"
-          exit 1
-        fi
-
-        for f in $TASK_FILES; do
-          OLD_DIGEST=$(yq eval '.spec.params[] | select(.name == "POLICY_BUNDLE_DIGEST") | .default' "$f")
-          if [ -z "$OLD_DIGEST" ] || [ "$OLD_DIGEST" = "null" ]; then
-            echo "Warning: could not extract current digest from $f, skipping"
-            continue
-          fi
-          if [ "$OLD_DIGEST" = "$NEW_DIGEST" ]; then
-            echo "Already up to date in $f"
-            continue
-          fi
-          yq eval '(.spec.params[] | select(.name == "POLICY_BUNDLE_DIGEST") | .default) = "'"${NEW_DIGEST}"'"' -i "$f"
-          echo "Updated $f: ${OLD_DIGEST} → ${NEW_DIGEST}"
-        done
+      run: ./hack/update-policy-digest.sh /tmp/catalog-tasks/tasks/
 
     - name: Upload task definitions
       uses: actions/upload-artifact@v4
