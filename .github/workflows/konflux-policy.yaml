@@ -175,7 +175,7 @@ jobs:
         path: /tmp/catalog-tasks/tasks/
 
   tekton-task-bundle:
-    if: ${{ needs.update-task-definitions.result == 'success' && inputs.run_tekton_task_bundle != false }}
+    if: ${{ !cancelled() && !failure() && needs.update-task-definitions.result == 'success' && inputs.run_tekton_task_bundle != false }}
     runs-on: ubuntu-latest
     needs: [update-task-definitions]
 
@@ -212,7 +212,7 @@ jobs:
         tkn bundle push quay.io/conforma/tekton-task:konflux "${TASK_FILES[@]}"
 
   tekton-catalog:
-    if: ${{ needs.update-task-definitions.result == 'success' && inputs.run_tekton_catalog != false }}
+    if: ${{ !cancelled() && !failure() && needs.update-task-definitions.result == 'success' && inputs.run_tekton_catalog != false }}
     runs-on: ubuntu-latest
     needs: [update-task-definitions]
 
