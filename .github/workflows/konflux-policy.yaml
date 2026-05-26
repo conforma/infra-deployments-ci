@@ -184,9 +184,13 @@ jobs:
       uses: imjasonh/setup-crane@v0.4
 
     - name: Install tkn
-      uses: tektoncd/actions/setup-tektoncd-cli@v1
-      with:
-        version: latest
+      run: |
+        set -euo pipefail
+        VERSION=$(gh release view --repo tektoncd/cli --json tagName -q .tagName)
+        URL="https://github.com/tektoncd/cli/releases/download/${VERSION}/tkn_${VERSION#v}_Linux_x86_64.tar.gz"
+        curl -sSL "$URL" | sudo tar -xz -C /usr/local/bin tkn
+      env:
+        GH_TOKEN: ${{ github.token }}
 
     - name: Log in to quay.io/conforma
       env:
