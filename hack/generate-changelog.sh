@@ -16,11 +16,15 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Generates a release changelog comparing :latest (to be promoted) against
-# :konflux (current production) for all Conforma images. Outputs markdown
-# to stdout.
+# :konflux (current production) for all Conforma images.
+#
+# By default writes to releases/<YYYY-MM-DDTHH:MM:SS>.md in the repo root.
+# Pass a path argument to write elsewhere, or "-" to write to stdout.
 #
 # Usage:
-#   ./hack/generate-changelog.sh > releases/2026-06-30.md
+#   ./hack/generate-changelog.sh                  # → releases/2026-06-30T14:30:00.md
+#   ./hack/generate-changelog.sh path/output.md   # → path/output.md
+#   ./hack/generate-changelog.sh -                # → stdout
 #
 # Dependencies:
 #   crane, gh, jq, go, git
@@ -34,6 +38,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+OUTPUT_FILE="${1:-${REPO_ROOT}/releases/$(date -u +%Y-%m-%dT%H:%M:%S).md}"
 
 TMPDIR_BASE=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_BASE"' EXIT
@@ -180,6 +186,11 @@ render_rule_diff() {
 # Main
 # ---------------------------------------------------------------------------
 
+if [[ "$OUTPUT_FILE" != "-" ]]; then
+    mkdir -p "$(dirname "$OUTPUT_FILE")"
+    exec 1>"$OUTPUT_FILE"
+fi
+
 echo "Generating changelog..." >&2
 
 # --- Section 1: Image digests ---
@@ -251,4 +262,7 @@ for image in "${POLICY_IMAGES[@]}"; do
 done
 
 echo "" >&2
+if [[ "$OUTPUT_FILE" != "-" ]]; then
+    echo "Changelog written to ${OUTPUT_FILE}" >&2
+fi
 echo "Done." >&2
