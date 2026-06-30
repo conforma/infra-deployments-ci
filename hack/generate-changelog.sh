@@ -18,28 +18,31 @@
 # Generates a release changelog comparing :latest (to be promoted) against
 # :konflux (current production) for all Conforma images.
 #
-# By default writes to releases/<YYYY-MM-DDTHH:MM:SS>.md in the repo root.
-# Pass a path argument to write elsewhere, or "-" to write to stdout.
+# By default creates a release directory at releases/<YYYY-MM-DDTHH:MM:SS>/
+# containing changelog.md and images.json (machine-readable image inputs
+# for the release workflow).
+#
+# Pass a directory argument to write elsewhere, or "-" to write the
+# changelog to stdout (images.json is skipped in this mode).
 #
 # Usage:
-#   ./hack/generate-changelog.sh                  # → releases/2026-06-30T14:30:00.md
-#   ./hack/generate-changelog.sh path/output.md   # → path/output.md
-#   ./hack/generate-changelog.sh -                # → stdout
+#   ./hack/generate-changelog.sh                  # → releases/2026-06-30T14:30:00/
+#   ./hack/generate-changelog.sh path/output/     # → path/output/
+#   ./hack/generate-changelog.sh -                # → stdout (changelog only)
 #
 # Dependencies:
 #   crane, gh, jq, go, git
 #
-# Output (markdown):
-#   - Image digest table
-#   - Merge commit logs for conforma/policy and conforma/cli
-#   - Policy rule diff for release-policy, task-policy, build-task-policy
+# Output:
+#   <release-dir>/changelog.md  — human-readable release notes
+#   <release-dir>/images.json   — machine-readable image list for the workflow
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-OUTPUT_FILE="${1:-${REPO_ROOT}/releases/$(date -u +%Y-%m-%dT%H:%M:%S).md}"
+RELEASE_DIR="${1:-${REPO_ROOT}/releases/$(date -u +%Y-%m-%dT%H:%M:%S)}"
 
 TMPDIR_BASE=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_BASE"' EXIT
@@ -48,10 +51,23 @@ trap 'rm -rf "$TMPDIR_BASE"' EXIT
 # Images to include in the changelog
 # ---------------------------------------------------------------------------
 
-POLICY_IMAGES=(
-    quay.io/conforma/release-policy
-    quay.io/conforma/task-policy
-    quay.io/conforma/build-task-policy
+# Policy images and their enterprise-contract mirrors. Each entry is
+# "conforma_repo|ec_mirror_repo". The mirror list ends up in images.json
+# so the release workflow can tag both namespaces.
+POLICY_IMAGE_ENTRIES=(
+    "quay.io/conforma/release-policy|quay.io/enterprise-contract/ec-release-policy"
+    "quay.io/conforma/task-policy|quay.io/enterprise-contract/ec-task-policy"
+    "quay.io/conforma/build-task-policy|quay.io/enterprise-contract/ec-build_task-policy"
+)
+
+POLICY_IMAGES=()
+for entry in "${POLICY_IMAGE_ENTRIES[@]}"; do
+    POLICY_IMAGES+=("${entry%%|*}")
+done
+
+COMPONENT_IMAGES=(
+    quay.io/conforma/cli
+    quay.io/conforma/tekton-task
 )
 
 COMMIT_LOG_SOURCES=(
@@ -62,8 +78,7 @@ COMMIT_LOG_SOURCES=(
 
 ALL_IMAGES=(
     "${POLICY_IMAGES[@]}"
-    quay.io/conforma/cli
-    quay.io/conforma/tekton-task
+    "${COMPONENT_IMAGES[@]}"
 )
 
 # ---------------------------------------------------------------------------
@@ -186,9 +201,9 @@ render_rule_diff() {
 # Main
 # ---------------------------------------------------------------------------
 
-if [[ "$OUTPUT_FILE" != "-" ]]; then
-    mkdir -p "$(dirname "$OUTPUT_FILE")"
-    exec 1>"$OUTPUT_FILE"
+if [[ "$RELEASE_DIR" != "-" ]]; then
+    mkdir -p "$RELEASE_DIR"
+    exec 1>"${RELEASE_DIR}/changelog.md"
 fi
 
 echo "Generating changelog..." >&2
@@ -262,7 +277,34 @@ for image in "${POLICY_IMAGES[@]}"; do
 done
 
 echo "" >&2
-if [[ "$OUTPUT_FILE" != "-" ]]; then
-    echo "Changelog written to ${OUTPUT_FILE}" >&2
+
+# --- Write images.json ---
+
+if [[ "$RELEASE_DIR" != "-" ]]; then
+    echo "Writing images.json..." >&2
+
+    IMAGES_JSON='{"policy":[],"components":[]}'
+
+    for entry in "${POLICY_IMAGE_ENTRIES[@]}"; do
+        IFS='|' read -r image mirror <<< "$entry"
+        digest=$(crane digest "${image}:latest" 2>/dev/null)
+        IMAGES_JSON=$(echo "$IMAGES_JSON" | jq \
+            --arg img "$image" \
+            --arg dig "$digest" \
+            --arg mir "$mirror" \
+            '.policy += [{"image": $img, "digest": $dig, "mirrors": [$mir]}]')
+    done
+
+    for image in "${COMPONENT_IMAGES[@]}"; do
+        digest=$(crane digest "${image}:latest" 2>/dev/null)
+        IMAGES_JSON=$(echo "$IMAGES_JSON" | jq \
+            --arg img "$image" \
+            --arg dig "$digest" \
+            '.components += [{"image": $img, "digest": $dig}]')
+    done
+
+    echo "$IMAGES_JSON" | jq . > "${RELEASE_DIR}/images.json"
+
+    echo "Release written to ${RELEASE_DIR}/" >&2
 fi
 echo "Done." >&2
