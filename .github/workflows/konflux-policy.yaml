@@ -40,6 +40,9 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        persist-credentials: false
 
     - name: Read release images.json
       id: release-images
@@ -54,7 +57,7 @@ jobs:
           IMAGES_FILE="${RELEASE_DIR}/images.json"
         else
           IMAGES_FILE=$(git diff --name-only --diff-filter=A "$BEFORE_SHA" "$AFTER_SHA" \
-            | grep '^releases/.*/images\.json$' | head -1)
+            | { grep '^releases/.*/images\.json$' || true; } | head -1)
         fi
 
         if [[ -z "$IMAGES_FILE" || ! -f "$IMAGES_FILE" ]]; then
@@ -117,11 +120,11 @@ jobs:
       run: |
         set -euo pipefail
 
-        echo "$RELEASE_IMAGES" | jq -r '.policy[] | "\(.image)|\(.mirrors | join(","))"' | \
-          while IFS='|' read -r image mirrors; do
-            echo "Updating ${image}:konflux"
+        echo "$RELEASE_IMAGES" | jq -r '.policy[] | "\(.image)|\(.digest)|\(.mirrors | join(","))"' | \
+          while IFS='|' read -r image digest mirrors; do
+            echo "Updating ${image}:konflux (from digest ${digest})"
             skopeo copy --all --digestfile image.digest \
-              "docker://${image}:latest" "docker://${image}:konflux"
+              "docker://${image}@${digest}" "docker://${image}:konflux"
             echo "Image digest: $(cat image.digest)"
 
             IFS=',' read -ra MIRROR_LIST <<< "$mirrors"
@@ -129,7 +132,7 @@ jobs:
               [[ -z "$mirror" ]] && continue
               echo "Updating ${mirror}:konflux"
               skopeo copy --all --digestfile image.digest \
-                "docker://${mirror}:latest" "docker://${mirror}:konflux"
+                "docker://${mirror}@${digest}" "docker://${mirror}:konflux"
               echo "Image digest: $(cat image.digest)"
             done
           done

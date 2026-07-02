@@ -543,13 +543,17 @@ type jsonRule struct {
 	Description string   `json:"description,omitempty"`
 	Solution    string   `json:"solution,omitempty"`
 	FailureMsg  string   `json:"failure_msg,omitempty"`
-	EffectiveOn string   `json:"effective_on,omitempty"`
-	Collections []string `json:"collections,omitempty"`
+	EffectiveOn string   `json:"effective_on"`
+	Collections []string `json:"collections"`
 	File        string   `json:"file"`
 	Source      string   `json:"source"`
 }
 
 func ruleChangeToJSON(c ruleChange) jsonRule {
+	collections := c.rule.collections
+	if collections == nil {
+		collections = []string{}
+	}
 	return jsonRule{
 		ShortName:   c.rule.shortName,
 		Kind:        c.rule.kind,
@@ -559,7 +563,7 @@ func ruleChangeToJSON(c ruleChange) jsonRule {
 		Solution:    c.rule.solution,
 		FailureMsg:  c.rule.failureMsg,
 		EffectiveOn: c.rule.effectiveOn,
-		Collections: c.rule.collections,
+		Collections: collections,
 		File:        c.file,
 		Source:      c.rule.source(),
 	}
@@ -835,6 +839,9 @@ func (c *ociClient) fetchManifest(ref ociRef) (ociManifest, error) {
 	var m ociManifest
 	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
 		return ociManifest{}, fmt.Errorf("decoding manifest: %w", err)
+	}
+	if len(m.Layers) == 0 {
+		return ociManifest{}, fmt.Errorf("manifest %s has no layers; manifest indexes/lists are not supported", ref.original)
 	}
 	return m, nil
 }
