@@ -2,8 +2,15 @@
 name: konflux-policy
 
 on:
+  push:
+    branches: [main]
+    paths: ['releases/**']
   workflow_dispatch:
     inputs:
+      release_dir:
+        description: 'Release directory containing images.json (e.g. releases/2026-06-30T14:30:00)'
+        type: string
+        required: true
       run_tag:
         description: 'Tag tested images as :konflux'
         type: boolean
@@ -29,9 +36,36 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       bundle-digests: ${{ steps.resolve-digests.outputs.bundle-digests }}
+      release-images: ${{ steps.release-images.outputs.images }}
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Read release images.json
+      id: release-images
+      env:
+        RELEASE_DIR: ${{ inputs.release_dir }}
+        BEFORE_SHA: ${{ github.event.before }}
+        AFTER_SHA: ${{ github.sha }}
+      run: |
+        set -euo pipefail
+
+        if [[ -n "$RELEASE_DIR" ]]; then
+          IMAGES_FILE="${RELEASE_DIR}/images.json"
+        else
+          IMAGES_FILE=$(git diff --name-only --diff-filter=A "$BEFORE_SHA" "$AFTER_SHA" \
+            | { grep '^releases/.*/images\.json$' || true; } | head -1)
+        fi
+
+        if [[ -z "$IMAGES_FILE" || ! -f "$IMAGES_FILE" ]]; then
+          echo "ERROR: No images.json found" >&2
+          exit 1
+        fi
+        echo "Using ${IMAGES_FILE}" >&2
+        echo "images=$(jq -c . "$IMAGES_FILE")" >> "$GITHUB_OUTPUT"
 
     - name: Set up Go
       uses: actions/setup-go@v5
@@ -80,38 +114,28 @@ jobs:
         password: ${{ secrets.BUNDLE_PUSH_PASS_CONFORMA }}
         registry: quay.io/conforma
 
-    - name: Tag latest release policy
+    - name: Tag policy images
+      env:
+        RELEASE_IMAGES: ${{ needs.acceptance-tests.outputs.release-images }}
       run: |
         set -euo pipefail
 
-        for repo in enterprise-contract/ec-release-policy conforma/release-policy; do
-          echo "Updating quay.io/${repo}:konflux"
-          skopeo copy --all --digestfile image.digest \
-            docker://quay.io/${repo}:latest docker://quay.io/${repo}:konflux
-          echo "Image digest: $(cat image.digest)"
-        done
+        echo "$RELEASE_IMAGES" | jq -r '.policy[] | "\(.image)|\(.digest)|\(.mirrors | join(","))"' | \
+          while IFS='|' read -r image digest mirrors; do
+            echo "Updating ${image}:konflux (from digest ${digest})"
+            skopeo copy --all --digestfile image.digest \
+              "docker://${image}@${digest}" "docker://${image}:konflux"
+            echo "Image digest: $(cat image.digest)"
 
-    - name: Tag latest task policy
-      run: |
-        set -euo pipefail
-
-        for repo in enterprise-contract/ec-task-policy conforma/task-policy; do
-          echo "Updating quay.io/${repo}:konflux"
-          skopeo copy --all --digestfile image.digest \
-            docker://quay.io/${repo}:latest docker://quay.io/${repo}:konflux
-          echo "Image digest: $(cat image.digest)"
-        done
-
-    - name: Tag latest build task policy
-      run: |
-        set -euo pipefail
-
-        for repo in enterprise-contract/ec-build_task-policy conforma/build-task-policy; do
-          echo "Updating quay.io/${repo}:konflux"
-          skopeo copy --all --digestfile image.digest \
-            docker://quay.io/${repo}:latest docker://quay.io/${repo}:konflux
-          echo "Image digest: $(cat image.digest)"
-        done
+            IFS=',' read -ra MIRROR_LIST <<< "$mirrors"
+            for mirror in "${MIRROR_LIST[@]}"; do
+              [[ -z "$mirror" ]] && continue
+              echo "Updating ${mirror}:konflux"
+              skopeo copy --all --digestfile image.digest \
+                "docker://${mirror}@${digest}" "docker://${mirror}:konflux"
+              echo "Image digest: $(cat image.digest)"
+            done
+          done
 
     - name: Tag tested images by digest
       env:
