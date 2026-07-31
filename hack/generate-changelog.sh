@@ -181,7 +181,7 @@ render_rule_diff() {
             "**\($group[0].kind)**",
             "",
             ($group[] |
-                (if .doc_url != "" then "- **[\(.title)](\(.doc_url))** — " else "- **\(.title)** — " end) +
+                (if (.doc_url // "") != "" then "- **[\(.title)](\(.doc_url))** — " else "- **\(.title)** — " end) +
                 "\(.description)<br>Effective: \(.effective_on | if . == "" then "now" else .[0:10] end) · Collections: \(.collections | join(", "))"
             )'
     fi
@@ -195,7 +195,7 @@ render_rule_diff() {
             "**\($group[0].kind)**",
             "",
             ($group[] |
-                (if .doc_url != "" then "- **[\(.title)](\(.doc_url))** — " else "- **\(.title)** — " end) +
+                (if (.doc_url // "") != "" then "- **[\(.title)](\(.doc_url))** — " else "- **\(.title)** — " end) +
                 "\(.description)<br>Collections: \(.collections | join(", "))"
             )'
     fi
