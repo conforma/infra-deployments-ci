@@ -341,6 +341,7 @@ func parseRegoRules(content string) map[string]*rule {
 // ---------------------------------------------------------------------------
 
 var useColor bool
+var docBaseURL string
 
 func colorize(text, code string) string {
 	if !useColor {
@@ -547,6 +548,20 @@ type jsonRule struct {
 	Collections []string `json:"collections"`
 	File        string   `json:"file"`
 	Source      string   `json:"source"`
+	DocURL      string   `json:"doc_url,omitempty"`
+}
+
+func buildDocURL(file, pkg, shortName string) string {
+	if docBaseURL == "" || pkg == "" || shortName == "" {
+		return ""
+	}
+	parts := strings.SplitN(file, "/", 3)
+	if len(parts) < 2 {
+		return ""
+	}
+	policyType := parts[1] // "release", "pipeline", "build_task", etc.
+	return fmt.Sprintf("%s/%s_%s.html#%s__%s",
+		strings.TrimRight(docBaseURL, "/"), policyType, pkg, pkg, shortName)
 }
 
 func ruleChangeToJSON(c ruleChange) jsonRule {
@@ -566,6 +581,7 @@ func ruleChangeToJSON(c ruleChange) jsonRule {
 		Collections: collections,
 		File:        c.file,
 		Source:      c.rule.source(),
+		DocURL:      buildDocURL(c.file, c.rule.pkg, c.rule.shortName),
 	}
 }
 
@@ -937,6 +953,7 @@ func main() {
 	bundle := flag.Bool("bundle", false, "Compare two OCI bundle image references (pass as positional args)")
 	noColor := flag.Bool("no-color", false, "Disable color output")
 	jsonOut := flag.Bool("json", false, "Output structured JSON for LLM consumption")
+	docBase := flag.String("doc-base-url", "https://conforma.dev/docs/policy/packages", "Base URL for rule documentation links")
 
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, `Usage: policy-rule-diff [flags] [refs...]
@@ -956,6 +973,7 @@ Flags:`)
 	flag.Parse()
 
 	useColor = !*noColor && isTerminal()
+	docBaseURL = *docBase
 
 	// ── Direct file comparison ───────────────────────────────────────────
 	if *before != "" || *after != "" {

@@ -156,7 +156,9 @@ render_rule_diff() {
     echo "  diffing ${name}..." >&2
     local diff_json
     diff_json=$(cd "${REPO_ROOT}/hack/policy-rule-diff" && go run . \
-        -bundle -json "${image}:konflux" "${image}:latest" 2>/dev/null)
+        -bundle -json \
+        -doc-base-url "https://conforma.dev/docs/policy/packages" \
+        "${image}:konflux" "${image}:latest" 2>/dev/null)
 
     local added removed
     added=$(echo "$diff_json" | jq '.added | length')
@@ -179,7 +181,8 @@ render_rule_diff() {
             "**\($group[0].kind)**",
             "",
             ($group[] |
-                "- **\(.title)** — \(.description)<br>Effective: \(.effective_on | if . == "" then "now" else .[0:10] end) · Collections: \(.collections | join(", "))"
+                (if (.doc_url // "") != "" then "- **[\(.title)](\(.doc_url))** — " else "- **\(.title)** — " end) +
+                "\(.description)<br>Effective: \(.effective_on | if . == "" then "now" else .[0:10] end) · Collections: \(.collections | join(", "))"
             )'
     fi
 
@@ -192,7 +195,8 @@ render_rule_diff() {
             "**\($group[0].kind)**",
             "",
             ($group[] |
-                "- **\(.title)** — \(.description)<br>Collections: \(.collections | join(", "))"
+                (if (.doc_url // "") != "" then "- **[\(.title)](\(.doc_url))** — " else "- **\(.title)** — " end) +
+                "\(.description)<br>Collections: \(.collections | join(", "))"
             )'
     fi
 }
@@ -210,7 +214,9 @@ echo "Generating changelog..." >&2
 
 # --- Section 1: Image digests ---
 
-echo "# Conforma Release"
+echo "# Konflux Policy Release"
+echo ""
+echo "> Conforma policy update for Red Hat's Konflux deployment."
 echo ""
 echo "## Images"
 echo ""
@@ -272,9 +278,21 @@ echo "Running policy rule diffs..." >&2
 echo ""
 echo "## Policy Rule Changes"
 
-for image in "${POLICY_IMAGES[@]}"; do
-    render_rule_diff "$image"
-done
+# Render release-policy first (primary focus)
+render_rule_diff "${POLICY_IMAGES[0]}"
+
+# Render remaining policies in a collapsible section
+if [[ ${#POLICY_IMAGES[@]} -gt 1 ]]; then
+    echo ""
+    echo "<details>"
+    echo "<summary>Task and build policy changes</summary>"
+    echo ""
+    for image in "${POLICY_IMAGES[@]:1}"; do
+        render_rule_diff "$image"
+    done
+    echo ""
+    echo "</details>"
+fi
 
 echo "" >&2
 
