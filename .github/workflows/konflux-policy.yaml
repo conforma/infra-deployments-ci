@@ -134,7 +134,7 @@ jobs:
               [[ -z "$mirror" ]] && continue
               echo "Updating ${mirror}:konflux"
               skopeo copy --all --digestfile image.digest \
-                "docker://${mirror}@${digest}" "docker://${mirror}:konflux"
+                "docker://${image}@${digest}" "docker://${mirror}:konflux"
               echo "Image digest: $(cat image.digest)"
             done
           done
