@@ -1,0 +1,35 @@
+{
+  "policy": [
+    {
+      "image": "quay.io/conforma/release-policy",
+      "digest": "sha256:ee5c3a020c9545eca738ed87198af0b235463069b2d72c5dba609364a83321d2",
+      "mirrors": [
+        "quay.io/enterprise-contract/ec-release-policy"
+      ]
+    },
+    {
+      "image": "quay.io/conforma/task-policy",
+      "digest": "sha256:39bbb84f9137bd270b61979b3284e3c7886e06fe4347594614bc6f45188179ce",
+      "mirrors": [
+        "quay.io/enterprise-contract/ec-task-policy"
+      ]
+    },
+    {
+      "image": "quay.io/conforma/build-task-policy",
+      "digest": "sha256:932e9371203115b883a000eba0b350d25ef8fd9d6e6751f6f999889c0e3db32d",
+      "mirrors": [
+        "quay.io/enterprise-contract/ec-build_task-policy"
+      ]
+    }
+  ],
+  "components": [
+    {
+      "image": "quay.io/conforma/cli",
+      "digest": "sha256:871fbcc2e4dc7f0edeb6c7c9f60536e0dc580948cb6c7de719142b6e7685bad9"
+    },
+    {
+      "image": "quay.io/conforma/tekton-task",
+      "digest": "sha256:e097724eb48295d640d245591576273dc33e2d3e70248f2cc241684f35d47dbf"
+    }
+  ]
+}
