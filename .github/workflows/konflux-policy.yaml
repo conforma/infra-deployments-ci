@@ -231,6 +231,9 @@ jobs:
         path: /tmp/catalog-tasks/tasks/
 
     - name: Push tekton-task bundle
+      env:
+        RUN_ID: ${{ github.run_id }}
+        RUN_ATTEMPT: ${{ github.run_attempt }}
       run: |
         set -euo pipefail
 
@@ -239,7 +242,18 @@ jobs:
           TASK_FILES+=("-f" "$f")
         done < <(find /tmp/catalog-tasks/tasks -name '*.yaml' -type f)
 
-        tkn bundle push quay.io/conforma/tekton-task:konflux "${TASK_FILES[@]}"
+        # Push this run's bundle to its own unique tag first, then move
+        # :konflux to the same digest. Because :konflux is otherwise the only
+        # tag the bundle ever gets, each push moves :konflux and leaves the
+        # previous digest untagged (orphaned) in Quay. run_id + run_attempt
+        # make the per-run tag unique, so every pushed digest keeps a tag.
+        # Tagging :konflux from our own unique tag (rather than re-reading the
+        # mutable :konflux) also avoids a race where a concurrent run's push
+        # could leave this run's digest untagged.
+        persistent_tag="$(date -u +%Y-%m-%d)-${RUN_ID}-${RUN_ATTEMPT}"
+        tkn bundle push "quay.io/conforma/tekton-task:${persistent_tag}" "${TASK_FILES[@]}"
+        crane tag "quay.io/conforma/tekton-task:${persistent_tag}" konflux
+        echo "Pushed tekton-task bundle as ${persistent_tag} and updated :konflux"
 
   tekton-catalog:
     if: ${{ !cancelled() && !failure() && needs.update-task-definitions.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.run_tekton_catalog != false) }}
