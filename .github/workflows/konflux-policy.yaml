@@ -250,7 +250,11 @@ jobs:
         # Tagging :konflux from our own unique tag (rather than re-reading the
         # mutable :konflux) also avoids a race where a concurrent run's push
         # could leave this run's digest untagged.
-        persistent_tag="$(date -u +%Y-%m-%d)-${RUN_ID}-${RUN_ATTEMPT}"
+        # The run- prefix reserves a distinct namespace for these bundle tags:
+        # the repo also carries Konflux build tags (gh-*, kf-*) and cosign
+        # signatures (sha256-*), so a dedicated prefix lets the orphan cleanup
+        # (EC-2113) age out run-* tags without matching anything else.
+        persistent_tag="run-$(date -u +%Y-%m-%d)-${RUN_ID}-${RUN_ATTEMPT}"
         tkn bundle push "quay.io/conforma/tekton-task:${persistent_tag}" "${TASK_FILES[@]}"
         crane tag "quay.io/conforma/tekton-task:${persistent_tag}" konflux
         echo "Pushed tekton-task bundle as ${persistent_tag} and updated :konflux"
