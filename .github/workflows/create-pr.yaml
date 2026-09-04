@@ -18,20 +18,20 @@ jobs:
     steps:
 
     - name: Harden Runner
-      uses: step-security/harden-runner@df199fb7be9f65074067a9eb93f12bb4c5547cf2 # v2.13.3
+      uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
       with:
         egress-policy: audit
         disable-telemetry: true
 
     - name: Checkout infra-deployments
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       with:
         repository: redhat-appstudio/infra-deployments
         ref: main
         path: infra-deployments
 
     - name: Checkout ec
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       with:
         repository: conforma/cli
         ref: main
@@ -42,7 +42,7 @@ jobs:
       working-directory: cli
 
     - name: Checkout conforma-crds
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       with:
         repository: conforma/crds
         ref: main
@@ -53,7 +53,7 @@ jobs:
       working-directory: conforma-crds
 
     - name: Checkout ec-config
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       with:
         repository: conforma/config
         ref: main
@@ -70,7 +70,7 @@ jobs:
       working-directory: infra-deployments
 
     - name: Checkout infra-deployments-ci
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
       with:
         path: infra-deployments-ci
 
