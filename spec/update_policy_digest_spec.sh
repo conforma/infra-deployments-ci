@@ -36,6 +36,27 @@ spec:
 EOF
   }
 
+  create_pipeline_yaml() {
+    local dir="$1"
+    local name="$2"
+    local digest="$3"
+    mkdir -p "$dir"
+    cat > "${dir}/${name}.yaml" <<EOF
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: ${name}
+spec:
+  params:
+  - name: POLICY_BUNDLE_DIGEST
+    type: string
+    description: OCI digest to pin the release policy bundle.
+    default: "${digest}"
+  - name: OTHER_PARAM
+    default: unchanged
+EOF
+  }
+
   Describe "updates digest in task files"
     setup_tasks() {
       create_task_yaml "${TMPDIR}/tasks/verify-ec/0.1" "verify-ec" "sha256:oldoldoldoldoldoldoldoldoldoldoldoldoldoldoldoldoldoldoldoldold0"
@@ -56,6 +77,29 @@ EOF
       The status should be success
       The output should include "Updated 1 file(s)"
       The contents of file "${TMPDIR}/tasks/verify-ec/0.1/verify-ec.yaml" should include "unchanged"
+    End
+  End
+
+  Describe "updates digest in pipeline files"
+    setup_pipeline() {
+      create_pipeline_yaml "${TMPDIR}/pipelines/enterprise-contract/0.1" "enterprise-contract" "sha256:oldoldoldoldoldoldoldoldoldoldoldoldoldoldoldoldoldoldoldoldold0"
+    }
+
+    Before "setup_pipeline"
+
+    It "replaces the old digest with the new one"
+      When run script "$SCRIPT" "${TMPDIR}/pipelines"
+      The status should be success
+      The output should include "Updated"
+      The output should include "Updated 1 file(s)"
+      The contents of file "${TMPDIR}/pipelines/enterprise-contract/0.1/enterprise-contract.yaml" should include "$MOCK_NEW_DIGEST"
+    End
+
+    It "does not modify other params"
+      When run script "$SCRIPT" "${TMPDIR}/pipelines"
+      The status should be success
+      The output should include "Updated 1 file(s)"
+      The contents of file "${TMPDIR}/pipelines/enterprise-contract/0.1/enterprise-contract.yaml" should include "unchanged"
     End
   End
 
@@ -132,14 +176,23 @@ EOF
     End
   End
 
-  Describe "error cases"
-    It "fails when no arguments provided"
-      When run script "$SCRIPT"
-      The status should be failure
-      The stderr should include "Usage"
-    End
+  Describe "handles empty defaults gracefully"
+    setup_empty() {
+      create_task_yaml "${TMPDIR}/tasks/verify-ec/0.1" "verify-ec" ""
+    }
 
-    It "fails when no task files contain POLICY_BUNDLE_DIGEST"
+    Before "setup_empty"
+
+    It "skips files with empty POLICY_BUNDLE_DIGEST default"
+      When run script "$SCRIPT" "${TMPDIR}/tasks"
+      The status should be success
+      The output should include "Warning: could not extract current digest"
+      The output should include "Updated 0 file(s)"
+    End
+  End
+
+  Describe "no files contain POLICY_BUNDLE_DIGEST"
+    setup_empty_dir() {
       local dir="${TMPDIR}/tasks/no-digest/0.1"
       mkdir -p "$dir"
       cat > "${dir}/no-digest.yaml" <<'EOF'
@@ -152,9 +205,22 @@ spec:
   - name: SOME_OTHER_PARAM
     default: value
 EOF
+    }
+
+    Before "setup_empty_dir"
+
+    It "exits cleanly when no files match"
       When run script "$SCRIPT" "${TMPDIR}/tasks"
+      The status should be success
+      The output should include "nothing to do"
+    End
+  End
+
+  Describe "error cases"
+    It "fails when no arguments provided"
+      When run script "$SCRIPT"
       The status should be failure
-      The output should include "No task files contain POLICY_BUNDLE_DIGEST"
+      The stderr should include "Usage"
     End
   End
 End
