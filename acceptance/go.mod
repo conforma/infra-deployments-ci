@@ -20,7 +20,7 @@ go 1.25.6
 
 require (
 	github.com/cucumber/godog v0.15.1
-	github.com/tektoncd/pipeline v1.10.1
+	github.com/tektoncd/pipeline v1.10.3
 	k8s.io/api v0.35.8
 	k8s.io/apimachinery v0.35.8
 	k8s.io/client-go v0.35.8
