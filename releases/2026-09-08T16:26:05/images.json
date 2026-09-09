@@ -1,0 +1,80 @@
+{
+  "policy": [
+    {
+      "image": "quay.io/conforma/release-policy",
+      "digest": "sha256:10de4ff888f9d054baeaa15c528ff74118bfd3c99ed0e5fc0ac24e72e83e01dc",
+      "mirrors": [
+        "quay.io/enterprise-contract/ec-release-policy"
+      ]
+    },
+    {
+      "image": "quay.io/conforma/task-policy",
+      "digest": "sha256:d023b6fd037357659d233df7e085b2e7a1159d80746050c964fc33e3c67e9826",
+      "mirrors": [
+        "quay.io/enterprise-contract/ec-task-policy"
+      ]
+    },
+    {
+      "image": "quay.io/conforma/build-task-policy",
+      "digest": "sha256:76d49ad45557eef03581b15994d30bb09d005db6c9aaaf8aef5e44532cfe23cb",
+      "mirrors": [
+        "quay.io/enterprise-contract/ec-build_task-policy"
+      ]
+    }
+  ],
+  "components": [
+    {
+      "image": "quay.io/conforma/cli",
+      "digest": "sha256:f19ee80ccf91370136ad865ee8c79a9adee944b998183a6a2db5049fc0f448c2"
+    },
+    {
+      "image": "quay.io/conforma/tekton-task",
+      "digest": "sha256:37b57db5fd7706509011ea031b564a50c468a76de85d327d37869a7bf8a115cf"
+    }
+  ],
+  "policyBehavior": {
+    "effectiveTime": "2026-09-08T16:26:05Z",
+    "expectedChanges": {
+      "insecure-buildah-parameters": {
+        "addedViolations": [],
+        "removedViolations": [],
+        "addedWarnings": [
+          "buildah_build_task.disallowed_platform_patterns_pattern"
+        ],
+      "removedWarnings": []
+    },
+    "non-hermetic-build": {
+      "addedViolations": [],
+      "removedViolations": [],
+      "addedWarnings": [
+        "buildah_build_task.disallowed_platform_patterns_pattern"
+      ],
+      "removedWarnings": []
+    },
+    "permissive-prefetch": {
+      "addedViolations": [],
+      "removedViolations": [],
+      "addedWarnings": [
+        "buildah_build_task.disallowed_platform_patterns_pattern"
+      ],
+      "removedWarnings": []
+    },
+    "invalid-slsa-v1-materials": {
+      "addedViolations": [],
+      "removedViolations": [],
+      "addedWarnings": [
+        "buildah_build_task.disallowed_platform_patterns_pattern"
+      ],
+      "removedWarnings": []
+    },
+    "unpinned-rpm-ostree-builder": {
+      "addedViolations": [],
+      "removedViolations": [],
+      "addedWarnings": [
+        "buildah_build_task.disallowed_platform_patterns_pattern"
+      ],
+        "removedWarnings": []
+      }
+    }
+  }
+}
