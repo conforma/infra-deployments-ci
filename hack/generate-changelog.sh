@@ -46,6 +46,9 @@ RELEASE_DIR="${1:-${REPO_ROOT}/releases/$(date -u +%Y-%m-%dT%H:%M:%S)}"
 
 TMPDIR_BASE=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_BASE"' EXIT
+CANDIDATE_IMAGES_FILE="${TMPDIR_BASE}/images.json"
+CHANGELOG_FILE="${TMPDIR_BASE}/changelog.md"
+POLICY_BEHAVIOR_FILE="${TMPDIR_BASE}/policy-behavior.md"
 
 # ---------------------------------------------------------------------------
 # Images to include in the changelog
@@ -107,8 +110,8 @@ get_revision() {
             return 1
         fi
 
-        local repo="${image%:*}"
-        repo="${repo%@*}"
+        local repo="${image%@*}"
+        repo="${repo%:*}"
         manifest=$(crane manifest "${repo}@${amd64_digest}" 2>/dev/null)
     fi
 
@@ -151,6 +154,8 @@ get_merge_commits() {
 # Outputs nothing if there are no changes.
 render_rule_diff() {
     local image="$1"
+    local before_ref="$2"
+    local after_ref="$3"
     local name="${image##*/}"
 
     echo "  diffing ${name}..." >&2
@@ -158,7 +163,7 @@ render_rule_diff() {
     diff_json=$(cd "${REPO_ROOT}/hack/policy-rule-diff" && go run . \
         -bundle -json \
         -doc-base-url "https://conforma.dev/docs/policy/packages" \
-        "${image}:konflux" "${image}:latest" 2>/dev/null)
+        "${before_ref}" "${after_ref}" 2>/dev/null)
 
     local added removed
     added=$(echo "$diff_json" | jq '.added | length')
@@ -201,14 +206,67 @@ render_rule_diff() {
     fi
 }
 
+candidate_digest_for() {
+    local image="$1"
+    jq -er --arg image "$image" \
+        '.policy[]?, .components[]? | select(.image == $image) | .digest' \
+        "$CANDIDATE_IMAGES_FILE"
+}
+
+candidate_ref_for() {
+    local image="$1"
+    local digest
+    digest=$(candidate_digest_for "$image")
+    printf '%s@%s\n' "$image" "$digest"
+}
+
+resolve_candidate_images() {
+    local images_json='{"policy":[],"components":[]}'
+    local entry image mirror digest
+
+    for entry in "${POLICY_IMAGE_ENTRIES[@]}"; do
+        IFS='|' read -r image mirror <<< "$entry"
+        echo "  resolving ${image}:latest..." >&2
+        if ! digest=$(crane digest "${image}:latest" 2>/dev/null); then
+            echo "ERROR: Failed to resolve ${image}:latest" >&2
+            return 1
+        fi
+        if [[ ! "$digest" =~ ^sha256:[0-9a-fA-F]{64}$ ]]; then
+            echo "ERROR: crane returned an invalid digest for ${image}:latest: ${digest}" >&2
+            return 1
+        fi
+        images_json=$(jq --arg img "$image" --arg dig "$digest" --arg mir "$mirror" \
+            '.policy += [{"image": $img, "digest": $dig, "mirrors": [$mir]}]' <<< "$images_json")
+    done
+
+    for image in "${COMPONENT_IMAGES[@]}"; do
+        echo "  resolving ${image}:latest..." >&2
+        if ! digest=$(crane digest "${image}:latest" 2>/dev/null); then
+            echo "ERROR: Failed to resolve ${image}:latest" >&2
+            return 1
+        fi
+        if [[ ! "$digest" =~ ^sha256:[0-9a-fA-F]{64}$ ]]; then
+            echo "ERROR: crane returned an invalid digest for ${image}:latest: ${digest}" >&2
+            return 1
+        fi
+        images_json=$(jq --arg img "$image" --arg dig "$digest" \
+            '.components += [{"image": $img, "digest": $dig}]' <<< "$images_json")
+    done
+
+    echo "$images_json" | jq . > "$CANDIDATE_IMAGES_FILE"
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
-if [[ "$RELEASE_DIR" != "-" ]]; then
-    mkdir -p "$RELEASE_DIR"
-    exec 1>"${RELEASE_DIR}/changelog.md"
-fi
+resolve_candidate_images
+
+# Keep all changelog output in a temporary file. The final files are copied to
+# the release directory only after every section, including policy behavior,
+# has completed successfully.
+exec 3>&1
+exec 1>"$CHANGELOG_FILE"
 
 echo "Generating changelog..." >&2
 
@@ -222,8 +280,7 @@ echo "## Images"
 echo ""
 
 for image in "${ALL_IMAGES[@]}"; do
-    echo "  resolving ${image}:latest..." >&2
-    digest=$(crane digest "${image}:latest" 2>/dev/null)
+    digest=$(candidate_digest_for "$image")
     local_name="${image##*/}"
     echo "- **${local_name}** — \`${digest}\`"
 done
@@ -240,8 +297,10 @@ for entry in "${COMMIT_LOG_SOURCES[@]}"; do
     echo "Processing ${github_repo}..." >&2
 
     echo "  fetching revisions..." >&2
-    konflux_rev=$(get_revision "${image_repo}:konflux")
-    latest_rev=$(get_revision "${image_repo}:latest")
+    konflux_ref="${image_repo}:konflux"
+    candidate_ref=$(candidate_ref_for "$image_repo")
+    konflux_rev=$(get_revision "$konflux_ref")
+    latest_rev=$(get_revision "$candidate_ref")
 
     echo "  konflux: ${konflux_rev}" >&2
     echo "  latest:  ${latest_rev}" >&2
@@ -279,7 +338,8 @@ echo ""
 echo "## Policy Rule Changes"
 
 # Render release-policy first (primary focus)
-render_rule_diff "${POLICY_IMAGES[0]}"
+render_rule_diff "${POLICY_IMAGES[0]}" \
+    "${POLICY_IMAGES[0]}:konflux" "$(candidate_ref_for "${POLICY_IMAGES[0]}")"
 
 # Render remaining policies in a collapsible section
 if [[ ${#POLICY_IMAGES[@]} -gt 1 ]]; then
@@ -288,7 +348,7 @@ if [[ ${#POLICY_IMAGES[@]} -gt 1 ]]; then
     echo "<summary>Task and build policy changes</summary>"
     echo ""
     for image in "${POLICY_IMAGES[@]:1}"; do
-        render_rule_diff "$image"
+        render_rule_diff "$image" "${image}:konflux" "$(candidate_ref_for "$image")"
     done
     echo ""
     echo "</details>"
@@ -296,33 +356,22 @@ fi
 
 echo "" >&2
 
-# --- Write images.json ---
+echo "" >&2
+echo "Comparing policy behavior..." >&2
+if ! "${SCRIPT_DIR}/policy-behavior/compare-policy-behavior.sh" \
+    --report "$POLICY_BEHAVIOR_FILE" \
+    "$CANDIDATE_IMAGES_FILE" > /dev/null; then
+    echo "ERROR: Policy behavior comparison failed" >&2
+    exit 1
+fi
+cat "$POLICY_BEHAVIOR_FILE"
 
 if [[ "$RELEASE_DIR" != "-" ]]; then
-    echo "Writing images.json..." >&2
-
-    IMAGES_JSON='{"policy":[],"components":[]}'
-
-    for entry in "${POLICY_IMAGE_ENTRIES[@]}"; do
-        IFS='|' read -r image mirror <<< "$entry"
-        digest=$(crane digest "${image}:latest" 2>/dev/null)
-        IMAGES_JSON=$(echo "$IMAGES_JSON" | jq \
-            --arg img "$image" \
-            --arg dig "$digest" \
-            --arg mir "$mirror" \
-            '.policy += [{"image": $img, "digest": $dig, "mirrors": [$mir]}]')
-    done
-
-    for image in "${COMPONENT_IMAGES[@]}"; do
-        digest=$(crane digest "${image}:latest" 2>/dev/null)
-        IMAGES_JSON=$(echo "$IMAGES_JSON" | jq \
-            --arg img "$image" \
-            --arg dig "$digest" \
-            '.components += [{"image": $img, "digest": $dig}]')
-    done
-
-    echo "$IMAGES_JSON" | jq . > "${RELEASE_DIR}/images.json"
-
+    mkdir -p "$RELEASE_DIR"
+    cp "$CHANGELOG_FILE" "${RELEASE_DIR}/changelog.md"
+    cp "$CANDIDATE_IMAGES_FILE" "${RELEASE_DIR}/images.json"
     echo "Release written to ${RELEASE_DIR}/" >&2
+else
+    cat "$CHANGELOG_FILE" >&3
 fi
 echo "Done." >&2

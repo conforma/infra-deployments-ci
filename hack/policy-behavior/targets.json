@@ -1,0 +1,16 @@
+{
+  "targets": [
+    {
+      "name": "golden-container",
+      "displayName": "Golden container",
+      "image": "quay.io/konflux-ci/ec-golden-image:latest",
+      "collection": "@redhat"
+    },
+    {
+      "name": "golden-rpm",
+      "displayName": "Golden RPM",
+      "image": "quay.io/redhat-user-workloads/rhtap-contract-tenant/golden-rpm/golden-rpm:latest",
+      "collection": "@redhat_rpms"
+    }
+  ]
+}
