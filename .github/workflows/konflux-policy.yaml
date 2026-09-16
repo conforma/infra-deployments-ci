@@ -167,6 +167,13 @@ jobs:
         # GITHUB_TOKEN, so don't persist it in the checkout's git config.
         persist-credentials: false
 
+    - name: Checkout step-actions
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        repository: conforma/step-actions
+        path: step-actions
+        persist-credentials: false
+
     - name: Install crane
       uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
 
@@ -198,11 +205,24 @@ jobs:
     - name: Update policy bundle digest in task definitions
       run: ./hack/update-policy-digest.sh /tmp/catalog-tasks/tasks/
 
+    - name: Copy step-action definitions
+      run: |
+        set -euo pipefail
+
+        # Only copy the StepAction YAML definitions, not READMEs or specs
+        # that also live under step-actions/stepactions/, so the catalog
+        # directory only ever contains catalog definitions (matching tasks/).
+        find step-actions/stepactions -name '*.yaml' -type f | while read -r f; do
+          dest="/tmp/catalog-tasks/${f#step-actions/}"
+          mkdir -p "$(dirname "$dest")"
+          cp "$f" "$dest"
+        done
+
     - name: Upload task definitions
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
       with:
         name: task-definitions
-        path: /tmp/catalog-tasks/tasks/
+        path: /tmp/catalog-tasks
 
   tekton-task-bundle:
     if: ${{ !cancelled() && !failure() && needs.update-task-definitions.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.run_tekton_task_bundle != false) }}
@@ -232,7 +252,7 @@ jobs:
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
       with:
         name: task-definitions
-        path: /tmp/catalog-tasks/tasks/
+        path: /tmp/catalog-tasks
 
     - name: Push tekton-task bundle
       env:
@@ -244,7 +264,7 @@ jobs:
         TASK_FILES=()
         while IFS= read -r f; do
           TASK_FILES+=("-f" "$f")
-        done < <(find /tmp/catalog-tasks/tasks -name '*.yaml' -type f)
+        done < <(find /tmp/catalog-tasks -name '*.yaml' -type f)
 
         # Push this run's bundle to its own unique tag first, then move
         # :konflux to the same digest. Because :konflux is otherwise the only
@@ -273,7 +293,7 @@ jobs:
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
       with:
         name: task-definitions
-        path: /tmp/catalog-tasks/tasks/
+        path: /tmp/catalog-tasks
 
     - name: Generate token
       id: app-token
@@ -301,11 +321,13 @@ jobs:
         cd tekton-catalog
 
         cp -r /tmp/catalog-tasks/tasks/* tasks/
+        mkdir -p stepactions
+        cp -r /tmp/catalog-tasks/stepactions/* stepactions/
 
-        git add tasks/
+        git add tasks/ stepactions/
 
         if git diff --cached --quiet; then
-          echo "No changes to task definitions"
+          echo "No changes to task or step-action definitions"
           exit 0
         fi
 
