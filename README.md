@@ -14,6 +14,8 @@ generation.
 
 The target images, display names, and policy collections are defined in
 [`hack/policy-behavior/targets.json`](hack/policy-behavior/targets.json).
+Each validation mounts [`golden-policy.yaml`](golden-policy.yaml) and injects
+the release-policy reference for that run and the collection for that target.
 
 ### Prerequisites
 
@@ -22,7 +24,8 @@ The workflow requires:
 - Bash, Docker or Podman, and `CONTAINER_ENGINE` when the engine is not Docker;
 - `crane` for resolving immutable image digests;
 - `jq` for JSON processing;
-- Git for resolving the `rhtap-ec-policy` data revision;
+- `yq` for rendering the per-run EnterpriseContractPolicy;
+- Git for source revision lookups;
 - Go for the policy rule diff helper; and
 - GitHub CLI (`gh`) for changelog pull-request titles.
 
@@ -51,12 +54,12 @@ export REGISTRY_AUTH_FILE="$HOME/.docker/config.json"
 
 At the start of generation, every candidate `:latest` image listed by the
 release configuration is resolved exactly once and recorded in a temporary
-`images.json`. The previous release's `images.json` is selected from the
-latest existing release directory; set `POLICY_BEHAVIOR_OLD_IMAGES_FILE` to
-override that selection. All later operations use digest-pinned references
-from the old and new manifests. On success, the new file is published as the
-release's `images.json`; neither it nor `changelog.md` is published after a
-failed run.
+`images.json`. The previous release's `images.json` is selected from the latest
+timestamped release directory; non-final directories such as `my-candidate`
+are ignored. Set `POLICY_BEHAVIOR_OLD_IMAGES_FILE` to override that selection.
+All later operations use digest-pinned references from the old and new
+manifests. On success, the new file is published as the release's `images.json`;
+neither it nor `changelog.md` is published after a failed run.
 
 The comparison uses:
 
@@ -66,8 +69,9 @@ The comparison uses:
   `images.json`;
 - digest-pinned Golden container and Golden RPM images resolved during the
   comparison;
-- one resolved revision of `rhtap-ec-policy`; and
-- one digest-pinned acceptable-bundles data image.
+- the policy data configured by `golden-policy.yaml`; and
+- a rendered policy file whose `spec.sources[0].policy` matches the release and
+  whose `spec.sources[0].config.include` matches the target image.
 
 Run the generator from the repository root:
 

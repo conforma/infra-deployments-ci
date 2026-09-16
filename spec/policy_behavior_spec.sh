@@ -8,6 +8,7 @@ Describe "compare-policy-behavior.sh"
     export VALIDATION_LOG="${TMPDIR}/validation.log"
     export VALIDATION_COUNT_FILE="${TMPDIR}/validation-count"
     export CRANE_LOG="${TMPDIR}/crane.log"
+    export POLICY_LOG="${TMPDIR}/policy.log"
     export CRANE_COUNT_DIR="${TMPDIR}/crane-counts"
     mkdir -p "$CRANE_COUNT_DIR"
 
@@ -30,7 +31,7 @@ case "$ref" in
   quay.io/konflux-ci/ec-golden-image:latest)
     printf 'sha256:%064d\n' 1
     ;;
-  quay.io/redhat-user-workloads/rhtap-contract-tenant/golden-rpm/golden-rpm:latest)
+  quay.io/redhat-user-workloads/rhtap-contract-tenant/golden-rpm/golden-rpm:on-pr-10ea4af075719a4626bd8e8487fd76dbe456a862.calculation-x86_64)
     printf 'sha256:%064d\n' 2
     ;;
   quay.io/konflux-ci/tekton-catalog/data-acceptable-bundles:latest)
@@ -61,6 +62,43 @@ EOF
 set -euo pipefail
 args="$*"
 printf '%s\n' "$args" >> "$VALIDATION_LOG"
+policy_file=""
+for arg in "$@"; do
+  case "$arg" in
+    *:/workspace/golden-policy.yaml:ro)
+      policy_file="${arg%:/workspace/golden-policy.yaml:ro}"
+      ;;
+  esac
+done
+[[ -n "$policy_file" && -f "$policy_file" ]] || {
+  echo "mounted policy file not found" >&2
+  exit 98
+}
+{
+  printf '%s\n' '--- validation policy ---'
+  cat "$policy_file"
+} >> "$POLICY_LOG"
+
+if [[ "$args" == *"cli@sha256:1111111111111111111111111111111111111111111111111111111111111111"* ]]; then
+  expected_policy="oci::quay.io/conforma/release-policy@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+else
+  expected_policy="oci::quay.io/conforma/release-policy@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+fi
+grep -Fq -- "- ${expected_policy}" "$policy_file" || {
+  echo "policy file does not match CLI release" >&2
+  exit 97
+}
+
+if [[ "$args" == *"ec-golden-image@sha256:"* ]]; then
+  expected_collection="@redhat"
+else
+  expected_collection="@redhat_rpms"
+fi
+grep -Fq -- "- '${expected_collection}'" "$policy_file" || {
+  echo "policy collection does not match target" >&2
+  exit 96
+}
+
 count=$(wc -l < "$VALIDATION_LOG" | tr -d ' ')
 if [[ "$count" -gt 4 ]]; then
   echo "more than four validation commands" >&2
@@ -142,11 +180,14 @@ EOF
     The contents of file "${VALIDATION_LOG}" should include "validate image"
     The contents of file "${VALIDATION_LOG}" should include "quay.io/conforma/cli@sha256:1111111111111111111111111111111111111111111111111111111111111111"
     The contents of file "${VALIDATION_LOG}" should include "quay.io/conforma/cli@sha256:4444444444444444444444444444444444444444444444444444444444444444"
-    The contents of file "${VALIDATION_LOG}" should include "oci::quay.io/conforma/release-policy@sha256:2222222222222222222222222222222222222222222222222222222222222222"
-    The contents of file "${VALIDATION_LOG}" should include "oci::quay.io/conforma/release-policy@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    The contents of file "${VALIDATION_LOG}" should include "--policy /workspace/golden-policy.yaml"
+    The contents of file "${POLICY_LOG}" should include "kind: EnterpriseContractPolicy"
+    The contents of file "${POLICY_LOG}" should include "oci::quay.io/conforma/release-policy@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    The contents of file "${POLICY_LOG}" should include "oci::quay.io/conforma/release-policy@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    The contents of file "${POLICY_LOG}" should include "oci::quay.io/redhat-konflux/policy-data:latest"
     The contents of file "${VALIDATION_LOG}" should include "--allow-past-effective-time"
-    The contents of file "${VALIDATION_LOG}" should include "@redhat"
-    The contents of file "${VALIDATION_LOG}" should include "@redhat_rpms"
+    The contents of file "${POLICY_LOG}" should include "'@redhat'"
+    The contents of file "${POLICY_LOG}" should include "'@redhat_rpms'"
     The contents of file "${TMPDIR}/report.md" should include "Added violations"
     The contents of file "${TMPDIR}/report.md" should include "Removed warnings"
     The contents of file "${TMPDIR}/report.md" should include "new.container"
@@ -197,6 +238,14 @@ EOF
     The status should be failure
     The stderr should include "validation command failed"
     The stderr should include "image pull failed"
+  End
+
+  It "fails before validation for an invalid policy template"
+    printf '%s\n' 'kind: ConfigMap' > "${TMPDIR}/invalid-policy.yaml"
+    When run script "$SCRIPT" --policy-template "${TMPDIR}/invalid-policy.yaml" "${TMPDIR}/old-images.json" "${TMPDIR}/new-images.json"
+    The status should be failure
+    The stderr should include "Policy template is not a valid EnterpriseContractPolicy"
+    The path "${VALIDATION_LOG}" should not be file
   End
 
   It "fails when a target digest cannot be resolved"

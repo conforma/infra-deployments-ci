@@ -24,15 +24,13 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "${SCRIPT_DIR}/../.." && pwd)
 
 TARGETS_FILE="${SCRIPT_DIR}/targets.json"
+POLICY_TEMPLATE="${REPO_ROOT}/golden-policy.yaml"
 REPORT_FILE="-"
 CONTAINER_ENGINE="${CONTAINER_ENGINE:-docker}"
 EFFECTIVE_TIME="${POLICY_BEHAVIOR_EFFECTIVE_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
 REGISTRY_AUTH_FILE="${REGISTRY_AUTH_FILE:-}"
 REGISTRY_AUTH_DEST="${REGISTRY_AUTH_DEST:-/root/.docker/config.json}"
 
-POLICY_DATA_REPOSITORY="https://github.com/release-engineering/rhtap-ec-policy.git"
-POLICY_DATA_PATH="git::github.com/release-engineering/rhtap-ec-policy//data"
-ACCEPTABLE_BUNDLES_IMAGE="quay.io/konflux-ci/tekton-catalog/data-acceptable-bundles:latest"
 PUBLIC_KEY_FILE="${REPO_ROOT}/acceptance/pub.key"
 
 usage() {
@@ -48,6 +46,7 @@ Arguments:
 
 Options:
   --targets FILE             Target definitions (default: ${TARGETS_FILE})
+  --policy-template FILE     EnterpriseContractPolicy template (default: ${POLICY_TEMPLATE})
   --report FILE              Write the Markdown report to FILE (default: stdout)
   --container-engine CMD     Container engine (default: \$CONTAINER_ENGINE or docker)
   --effective-time TIME      Shared RFC3339 policy effective time (default: now)
@@ -65,6 +64,11 @@ while [[ $# -gt 0 ]]; do
         --targets)
             [[ $# -ge 2 ]] || die "--targets requires a file path"
             TARGETS_FILE="$2"
+            shift 2
+            ;;
+        --policy-template)
+            [[ $# -ge 2 ]] || die "--policy-template requires a file path"
+            POLICY_TEMPLATE="$2"
             shift 2
             ;;
         --report)
@@ -106,9 +110,10 @@ NEW_IMAGES_FILE="$2"
 [[ -f "$OLD_IMAGES_FILE" ]] || die "Old images.json does not exist: ${OLD_IMAGES_FILE}"
 [[ -f "$NEW_IMAGES_FILE" ]] || die "New images.json does not exist: ${NEW_IMAGES_FILE}"
 [[ -f "$TARGETS_FILE" ]] || die "Target definitions do not exist: ${TARGETS_FILE}"
+[[ -f "$POLICY_TEMPLATE" ]] || die "Policy template does not exist: ${POLICY_TEMPLATE}"
 [[ -f "$PUBLIC_KEY_FILE" ]] || die "Public key does not exist: ${PUBLIC_KEY_FILE}"
 
-for command in jq crane git "$CONTAINER_ENGINE"; do
+for command in jq yq crane "$CONTAINER_ENGINE"; do
     command -v "$command" >/dev/null 2>&1 || die "Required command not found: ${command}"
 done
 
@@ -128,6 +133,16 @@ if ! jq -e '
         (.collection | type == "string" and length > 0))
 ' "$TARGETS_FILE" >/dev/null 2>&1; then
     die "Target definitions must contain exactly two complete targets: ${TARGETS_FILE}"
+fi
+
+if ! yq -e '
+    .apiVersion == "appstudio.redhat.com/v1alpha1" and
+    .kind == "EnterpriseContractPolicy" and
+    (.spec.sources | type == "!!seq" and length > 0) and
+    (.spec.sources[0].policy | type == "!!seq" and length > 0) and
+    (.spec.sources[0].config.include | type == "!!seq" and length > 0)
+' "$POLICY_TEMPLATE" >/dev/null 2>&1; then
+    die "Policy template is not a valid EnterpriseContractPolicy with a policy and include collection: ${POLICY_TEMPLATE}"
 fi
 
 if [[ -n "$REGISTRY_AUTH_FILE" && ! -f "$REGISTRY_AUTH_FILE" ]]; then
@@ -170,39 +185,23 @@ resolve_digest() {
     printf '%s\n' "$digest"
 }
 
-resolve_policy_data_revision() {
-    local revision
-
-    if ! revision=$(git ls-remote --exit-code "$POLICY_DATA_REPOSITORY" refs/heads/main 2>/dev/null | awk 'NR == 1 { print $1 }'); then
-        die "Failed to resolve the rhtap-ec-policy data revision"
-    fi
-    [[ "$revision" =~ ^[0-9a-fA-F]{40}$ ]] || \
-        die "Git returned an invalid rhtap-ec-policy revision: ${revision}"
-    printf '%s\n' "$revision"
-}
-
 image_repository() {
     local image="$1"
     image="${image%@*}"
     printf '%s\n' "${image%:*}"
 }
 
-policy_config() {
+render_policy() {
     local policy_ref="$1"
     local collection="$2"
-    local policy_data_ref="$3"
-    local acceptable_bundles_ref="$4"
+    local output_file="$3"
 
-    jq -cn \
-        --arg policy "oci::${policy_ref}" \
-        --arg policy_data "${POLICY_DATA_PATH}?ref=${policy_data_ref}" \
-        --arg acceptable_bundles "oci::${acceptable_bundles_ref}" \
-        --arg collection "$collection" \
-        '{sources: [{
-            policy: [$policy],
-            data: [$policy_data, $acceptable_bundles],
-            config: {include: [$collection]}
-        }]}'
+    POLICY_BEHAVIOR_POLICY_REF="oci::${policy_ref}" \
+        POLICY_BEHAVIOR_COLLECTION="$collection" \
+        yq '
+            .spec.sources[0].policy = [strenv(POLICY_BEHAVIOR_POLICY_REF)] |
+            .spec.sources[0].config.include = [strenv(POLICY_BEHAVIOR_COLLECTION)]
+        ' "$POLICY_TEMPLATE" > "$output_file"
 }
 
 validate_report_shape() {
@@ -254,15 +253,17 @@ run_validation() {
     local cli_ref="$3"
     local policy_ref="$4"
     local collection="$5"
-    local policy_data_ref="$6"
-    local acceptable_bundles_ref="$7"
-    local output_file="$8"
+    local output_file="$6"
     local stderr_file="${output_file}.stderr"
-    local config
+    local policy_file="${output_file%.json}-policy.yaml"
     local -a container_args
 
-    config=$(policy_config "$policy_ref" "$collection" "$policy_data_ref" "$acceptable_bundles_ref")
-    container_args=(run --rm --volume "${PUBLIC_KEY_FILE}:/workspace/pub.key:ro")
+    render_policy "$policy_ref" "$collection" "$policy_file"
+    container_args=(
+        run --rm
+        --volume "${PUBLIC_KEY_FILE}:/workspace/pub.key:ro"
+        --volume "${policy_file}:/workspace/golden-policy.yaml:ro"
+    )
     if [[ -n "$REGISTRY_AUTH_FILE" ]]; then
         container_args+=(--volume "${REGISTRY_AUTH_FILE}:${REGISTRY_AUTH_DEST}:ro")
     fi
@@ -270,7 +271,7 @@ run_validation() {
         "$cli_ref"
         validate image
         --image "$target_ref"
-        --policy "$config"
+        --policy /workspace/golden-policy.yaml
         --public-key /workspace/pub.key
         --ignore-rekor
         --strict=false
@@ -328,9 +329,7 @@ old_cli_ref=$(image_ref "$OLD_IMAGES_FILE" components quay.io/conforma/cli "old 
 new_cli_ref=$(image_ref "$NEW_IMAGES_FILE" components quay.io/conforma/cli "new CLI")
 old_policy_ref=$(image_ref "$OLD_IMAGES_FILE" policy quay.io/conforma/release-policy "old release policy")
 new_policy_ref=$(image_ref "$NEW_IMAGES_FILE" policy quay.io/conforma/release-policy "new release policy")
-policy_data_revision=$(resolve_policy_data_revision)
-acceptable_bundles_digest=$(resolve_digest "$ACCEPTABLE_BUNDLES_IMAGE")
-acceptable_bundles_ref="$(image_repository "$ACCEPTABLE_BUNDLES_IMAGE")@${acceptable_bundles_digest}"
+policy_data=$(yq -o=json -I=0 '.spec.sources[0].data' "$POLICY_TEMPLATE")
 
 report_file="${WORK_DIR}/policy-behavior.md"
 {
@@ -341,8 +340,8 @@ report_file="${WORK_DIR}/policy-behavior.md"
     echo "- Old policy: \`oci::${old_policy_ref}\`"
     echo "- New policy: \`oci::${new_policy_ref}\`"
     echo "- Effective time: \`${EFFECTIVE_TIME}\`"
-    echo "- Policy data: \`${POLICY_DATA_PATH}?ref=${policy_data_revision}\`"
-    echo "- Acceptable bundles: \`${acceptable_bundles_ref}\`"
+    echo "- Policy template: \`${POLICY_TEMPLATE#${REPO_ROOT}/}\`"
+    echo "- Policy data: \`${policy_data}\`"
     echo
 } > "$report_file"
 
@@ -361,9 +360,9 @@ while IFS= read -r target_json; do
     new_normalized="${WORK_DIR}/${safe_name}-new-normalized.json"
 
     run_validation "$display_name" "$target_ref" "$old_cli_ref" "$old_policy_ref" \
-        "$collection" "$policy_data_revision" "$acceptable_bundles_ref" "$old_report"
+        "$collection" "$old_report"
     run_validation "$display_name" "$target_ref" "$new_cli_ref" "$new_policy_ref" \
-        "$collection" "$policy_data_revision" "$acceptable_bundles_ref" "$new_report"
+        "$collection" "$new_report"
 
     normalize_report "$old_report" "$old_normalized"
     normalize_report "$new_report" "$new_normalized"
