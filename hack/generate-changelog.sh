@@ -15,8 +15,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Generates a release changelog comparing :latest (to be promoted) against
-# :konflux (current production) for all Conforma images.
+# Generates a release changelog comparing the new image manifest resolved from
+# :latest against the previous release's images.json for all Conforma images.
 #
 # By default creates a release directory at releases/<YYYY-MM-DDTHH:MM:SS>/
 # containing changelog.md and images.json (machine-readable image inputs
@@ -49,6 +49,7 @@ trap 'rm -rf "$TMPDIR_BASE"' EXIT
 CANDIDATE_IMAGES_FILE="${TMPDIR_BASE}/images.json"
 CHANGELOG_FILE="${TMPDIR_BASE}/changelog.md"
 POLICY_BEHAVIOR_FILE="${TMPDIR_BASE}/policy-behavior.md"
+OLD_IMAGES_FILE="${POLICY_BEHAVIOR_OLD_IMAGES_FILE:-}"
 
 # ---------------------------------------------------------------------------
 # Images to include in the changelog
@@ -220,6 +221,42 @@ candidate_ref_for() {
     printf '%s@%s\n' "$image" "$digest"
 }
 
+old_digest_for() {
+    local image="$1"
+    jq -er --arg image "$image" \
+        '.policy[]?, .components[]? | select(.image == $image) | .digest' \
+        "$OLD_IMAGES_FILE"
+}
+
+old_ref_for() {
+    local image="$1"
+    local digest
+    digest=$(old_digest_for "$image")
+    printf '%s@%s\n' "$image" "$digest"
+}
+
+find_previous_images_file() {
+    local release_dir="$1"
+    local excluded_path=""
+    local candidate
+
+    if [[ "$release_dir" != "-" ]]; then
+        if [[ "$release_dir" == /* ]]; then
+            excluded_path="${release_dir%/}/images.json"
+        else
+            excluded_path="${REPO_ROOT}/${release_dir%/}/images.json"
+        fi
+    fi
+
+    [[ -d "${REPO_ROOT}/releases" ]] || return 1
+    while IFS= read -r candidate; do
+        [[ -n "$excluded_path" && "$candidate" == "$excluded_path" ]] && continue
+        printf '%s\n' "$candidate"
+        return 0
+    done < <(find "${REPO_ROOT}/releases" -mindepth 2 -maxdepth 2 -type f -name images.json | sort -r)
+    return 1
+}
+
 resolve_candidate_images() {
     local images_json='{"policy":[],"components":[]}'
     local entry image mirror digest
@@ -260,6 +297,26 @@ resolve_candidate_images() {
 # Main
 # ---------------------------------------------------------------------------
 
+if [[ -z "$OLD_IMAGES_FILE" ]]; then
+    if ! OLD_IMAGES_FILE=$(find_previous_images_file "$RELEASE_DIR"); then
+        echo "ERROR: Could not find a previous release images.json under ${REPO_ROOT}/releases" >&2
+        exit 1
+    fi
+elif [[ "$OLD_IMAGES_FILE" != /* ]]; then
+    OLD_IMAGES_FILE="${REPO_ROOT}/${OLD_IMAGES_FILE}"
+fi
+
+[[ -f "$OLD_IMAGES_FILE" ]] || {
+    echo "ERROR: Previous release images.json does not exist: ${OLD_IMAGES_FILE}" >&2
+    exit 1
+}
+
+if ! jq -e 'type == "object" and (.policy | type == "array") and (.components | type == "array")' \
+    "$OLD_IMAGES_FILE" >/dev/null 2>&1; then
+    echo "ERROR: Previous release images.json is invalid or is missing policy/components arrays: ${OLD_IMAGES_FILE}" >&2
+    exit 1
+fi
+
 resolve_candidate_images
 
 # Keep all changelog output in a temporary file. The final files are copied to
@@ -297,26 +354,26 @@ for entry in "${COMMIT_LOG_SOURCES[@]}"; do
     echo "Processing ${github_repo}..." >&2
 
     echo "  fetching revisions..." >&2
-    konflux_ref="${image_repo}:konflux"
+    old_ref=$(old_ref_for "$image_repo")
     candidate_ref=$(candidate_ref_for "$image_repo")
-    konflux_rev=$(get_revision "$konflux_ref")
-    latest_rev=$(get_revision "$candidate_ref")
+    old_rev=$(get_revision "$old_ref")
+    new_rev=$(get_revision "$candidate_ref")
 
-    echo "  konflux: ${konflux_rev}" >&2
-    echo "  latest:  ${latest_rev}" >&2
+    echo "  old: ${old_rev}" >&2
+    echo "  new: ${new_rev}" >&2
 
     echo ""
     echo "### [${github_repo}](https://github.com/${github_repo})"
     echo ""
-    echo "Source commits: [\`${konflux_rev:0:8}..${latest_rev:0:8}\`](https://github.com/${github_repo}/compare/${konflux_rev:0:8}...${latest_rev:0:8})"
+    echo "Source commits: [\`${old_rev:0:8}..${new_rev:0:8}\`](https://github.com/${github_repo}/compare/${old_rev:0:8}...${new_rev:0:8})"
     echo ""
 
-    if [[ "$konflux_rev" == "$latest_rev" ]]; then
+    if [[ "$old_rev" == "$new_rev" ]]; then
         echo "No changes."
         continue
     fi
 
-    merge_commits=$(get_merge_commits "$github_repo" "$konflux_rev" "$latest_rev")
+    merge_commits=$(get_merge_commits "$github_repo" "$old_rev" "$new_rev")
 
     if [[ -z "$merge_commits" ]]; then
         echo "No merge commits."
@@ -339,7 +396,7 @@ echo "## Policy Rule Changes"
 
 # Render release-policy first (primary focus)
 render_rule_diff "${POLICY_IMAGES[0]}" \
-    "${POLICY_IMAGES[0]}:konflux" "$(candidate_ref_for "${POLICY_IMAGES[0]}")"
+    "$(old_ref_for "${POLICY_IMAGES[0]}")" "$(candidate_ref_for "${POLICY_IMAGES[0]}")"
 
 # Render remaining policies in a collapsible section
 if [[ ${#POLICY_IMAGES[@]} -gt 1 ]]; then
@@ -348,7 +405,7 @@ if [[ ${#POLICY_IMAGES[@]} -gt 1 ]]; then
     echo "<summary>Task and build policy changes</summary>"
     echo ""
     for image in "${POLICY_IMAGES[@]:1}"; do
-        render_rule_diff "$image" "${image}:konflux" "$(candidate_ref_for "$image")"
+        render_rule_diff "$image" "$(old_ref_for "$image")" "$(candidate_ref_for "$image")"
     done
     echo ""
     echo "</details>"
@@ -360,7 +417,7 @@ echo "" >&2
 echo "Comparing policy behavior..." >&2
 if ! "${SCRIPT_DIR}/policy-behavior/compare-policy-behavior.sh" \
     --report "$POLICY_BEHAVIOR_FILE" \
-    "$CANDIDATE_IMAGES_FILE" > /dev/null; then
+    "$OLD_IMAGES_FILE" "$CANDIDATE_IMAGES_FILE" > /dev/null; then
     echo "ERROR: Policy behavior comparison failed" >&2
     exit 1
 fi

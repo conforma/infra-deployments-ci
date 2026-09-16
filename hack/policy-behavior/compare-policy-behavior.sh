@@ -15,8 +15,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Compare policy behavior using the currently deployed CLI and policy against
-# the candidate CLI and policy recorded in a generated images.json file.
+# Compare policy behavior using the CLI and policy recorded in two release
+# images.json files.
 
 set -euo pipefail
 
@@ -30,8 +30,6 @@ EFFECTIVE_TIME="${POLICY_BEHAVIOR_EFFECTIVE_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)
 REGISTRY_AUTH_FILE="${REGISTRY_AUTH_FILE:-}"
 REGISTRY_AUTH_DEST="${REGISTRY_AUTH_DEST:-/root/.docker/config.json}"
 
-CURRENT_CLI="quay.io/conforma/cli:konflux"
-CURRENT_POLICY="quay.io/conforma/release-policy:konflux"
 POLICY_DATA_REPOSITORY="https://github.com/release-engineering/rhtap-ec-policy.git"
 POLICY_DATA_PATH="git::github.com/release-engineering/rhtap-ec-policy//data"
 ACCEPTABLE_BUNDLES_IMAGE="quay.io/konflux-ci/tekton-catalog/data-acceptable-bundles:latest"
@@ -40,12 +38,13 @@ PUBLIC_KEY_FILE="${REPO_ROOT}/acceptance/pub.key"
 usage() {
     cat <<EOF
 Usage:
-  $(basename "$0") [options] <candidate-images.json>
+  $(basename "$0") [options] <old-images.json> <new-images.json>
 
-Compare current and candidate policy behavior for the targets in targets.json.
+Compare old and new policy behavior for the targets in targets.json.
 
 Arguments:
-  candidate-images.json  Generated images.json containing candidate CLI and policy digests
+  old-images.json  Older release images.json containing CLI and policy digests
+  new-images.json  Newer release images.json containing CLI and policy digests
 
 Options:
   --targets FILE             Target definitions (default: ${TARGETS_FILE})
@@ -100,10 +99,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-[[ $# -eq 1 ]] || { usage >&2; die "Provide the candidate images.json file"; }
-CANDIDATE_IMAGES_FILE="$1"
+[[ $# -eq 2 ]] || { usage >&2; die "Provide old and new images.json files"; }
+OLD_IMAGES_FILE="$1"
+NEW_IMAGES_FILE="$2"
 
-[[ -f "$CANDIDATE_IMAGES_FILE" ]] || die "Candidate images.json does not exist: ${CANDIDATE_IMAGES_FILE}"
+[[ -f "$OLD_IMAGES_FILE" ]] || die "Old images.json does not exist: ${OLD_IMAGES_FILE}"
+[[ -f "$NEW_IMAGES_FILE" ]] || die "New images.json does not exist: ${NEW_IMAGES_FILE}"
 [[ -f "$TARGETS_FILE" ]] || die "Target definitions do not exist: ${TARGETS_FILE}"
 [[ -f "$PUBLIC_KEY_FILE" ]] || die "Public key does not exist: ${PUBLIC_KEY_FILE}"
 
@@ -111,10 +112,12 @@ for command in jq crane git "$CONTAINER_ENGINE"; do
     command -v "$command" >/dev/null 2>&1 || die "Required command not found: ${command}"
 done
 
-if ! jq -e 'type == "object" and (.policy | type == "array") and (.components | type == "array")' \
-    "$CANDIDATE_IMAGES_FILE" >/dev/null 2>&1; then
-    die "Candidate images.json is invalid or is missing policy/components arrays: ${CANDIDATE_IMAGES_FILE}"
-fi
+for images_file in "$OLD_IMAGES_FILE" "$NEW_IMAGES_FILE"; do
+    if ! jq -e 'type == "object" and (.policy | type == "array") and (.components | type == "array")' \
+        "$images_file" >/dev/null 2>&1; then
+        die "Images.json is invalid or is missing policy/components arrays: ${images_file}"
+    fi
+done
 
 if ! jq -e '
     (.targets | type == "array" and length == 2) and
@@ -131,25 +134,26 @@ if [[ -n "$REGISTRY_AUTH_FILE" && ! -f "$REGISTRY_AUTH_FILE" ]]; then
     die "Registry auth file does not exist: ${REGISTRY_AUTH_FILE}"
 fi
 
-candidate_ref() {
-    local section="$1"
-    local image="$2"
-    local description="$3"
+image_ref() {
+    local images_file="$1"
+    local section="$2"
+    local image="$3"
+    local description="$4"
     local count
     local digest
 
     if ! count=$(jq --arg section "$section" --arg image "$image" \
-        '[.[$section][] | select(.image == $image)] | length' "$CANDIDATE_IMAGES_FILE"); then
-        die "Could not read ${description} entry from candidate images.json"
+        '[.[$section][] | select(.image == $image)] | length' "$images_file"); then
+        die "Could not read ${description} entry from ${images_file}"
     fi
-    [[ "$count" -eq 1 ]] || die "Candidate images.json must contain exactly one ${description} entry for ${image}"
+    [[ "$count" -eq 1 ]] || die "${images_file} must contain exactly one ${description} entry for ${image}"
 
     if ! digest=$(jq -er --arg section "$section" --arg image "$image" \
-        '.[$section][] | select(.image == $image) | .digest' "$CANDIDATE_IMAGES_FILE"); then
-        die "Candidate ${description} entry for ${image} is missing a digest"
+        '.[$section][] | select(.image == $image) | .digest' "$images_file"); then
+        die "${description} entry for ${image} is missing a digest in ${images_file}"
     fi
     [[ "$digest" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || \
-        die "Candidate ${description} digest is not a valid sha256 digest for ${image}: ${digest}"
+        die "${description} digest is not a valid sha256 digest for ${image}: ${digest}"
 
     printf '%s@%s\n' "$image" "$digest"
 }
@@ -319,8 +323,10 @@ render_labels() {
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
 
-candidate_cli_ref=$(candidate_ref components quay.io/conforma/cli "CLI")
-candidate_policy_ref=$(candidate_ref policy quay.io/conforma/release-policy "release policy")
+old_cli_ref=$(image_ref "$OLD_IMAGES_FILE" components quay.io/conforma/cli "old CLI")
+new_cli_ref=$(image_ref "$NEW_IMAGES_FILE" components quay.io/conforma/cli "new CLI")
+old_policy_ref=$(image_ref "$OLD_IMAGES_FILE" policy quay.io/conforma/release-policy "old release policy")
+new_policy_ref=$(image_ref "$NEW_IMAGES_FILE" policy quay.io/conforma/release-policy "new release policy")
 policy_data_revision=$(resolve_policy_data_revision)
 acceptable_bundles_digest=$(resolve_digest "$ACCEPTABLE_BUNDLES_IMAGE")
 acceptable_bundles_ref="$(image_repository "$ACCEPTABLE_BUNDLES_IMAGE")@${acceptable_bundles_digest}"
@@ -329,10 +335,10 @@ report_file="${WORK_DIR}/policy-behavior.md"
 {
     echo "## Policy Behavior Changes"
     echo
-    echo "- Current CLI: \`${CURRENT_CLI}\`"
-    echo "- Candidate CLI: \`${candidate_cli_ref}\`"
-    echo "- Current policy: \`oci::${CURRENT_POLICY}\`"
-    echo "- Candidate policy: \`oci::${candidate_policy_ref}\`"
+    echo "- Old CLI: \`${old_cli_ref}\`"
+    echo "- New CLI: \`${new_cli_ref}\`"
+    echo "- Old policy: \`oci::${old_policy_ref}\`"
+    echo "- New policy: \`oci::${new_policy_ref}\`"
     echo "- Effective time: \`${EFFECTIVE_TIME}\`"
     echo "- Policy data: \`${POLICY_DATA_PATH}?ref=${policy_data_revision}\`"
     echo "- Acceptable bundles: \`${acceptable_bundles_ref}\`"
@@ -348,19 +354,19 @@ while IFS= read -r target_json; do
     target_ref="$(image_repository "$target_image")@${target_digest}"
 
     safe_name=$(printf '%s' "$target_name" | tr -cs '[:alnum:]_.-' '_')
-    current_report="${WORK_DIR}/${safe_name}-current.json"
-    candidate_report="${WORK_DIR}/${safe_name}-candidate.json"
-    current_normalized="${WORK_DIR}/${safe_name}-current-normalized.json"
-    candidate_normalized="${WORK_DIR}/${safe_name}-candidate-normalized.json"
+    old_report="${WORK_DIR}/${safe_name}-old.json"
+    new_report="${WORK_DIR}/${safe_name}-new.json"
+    old_normalized="${WORK_DIR}/${safe_name}-old-normalized.json"
+    new_normalized="${WORK_DIR}/${safe_name}-new-normalized.json"
 
-    run_validation "$display_name" "$target_ref" "$CURRENT_CLI" "$CURRENT_POLICY" \
-        "$collection" "$policy_data_revision" "$acceptable_bundles_ref" "$current_report"
-    run_validation "$display_name" "$target_ref" "$candidate_cli_ref" "$candidate_policy_ref" \
-        "$collection" "$policy_data_revision" "$acceptable_bundles_ref" "$candidate_report"
+    run_validation "$display_name" "$target_ref" "$old_cli_ref" "$old_policy_ref" \
+        "$collection" "$policy_data_revision" "$acceptable_bundles_ref" "$old_report"
+    run_validation "$display_name" "$target_ref" "$new_cli_ref" "$new_policy_ref" \
+        "$collection" "$policy_data_revision" "$acceptable_bundles_ref" "$new_report"
 
-    normalize_report "$current_report" "$current_normalized"
-    normalize_report "$candidate_report" "$candidate_normalized"
-    changes=$(diff_results "$current_normalized" "$candidate_normalized")
+    normalize_report "$old_report" "$old_normalized"
+    normalize_report "$new_report" "$new_normalized"
+    changes=$(diff_results "$old_normalized" "$new_normalized")
 
     {
         echo "### ${display_name}"

@@ -6,8 +6,31 @@ Describe "generate-changelog.sh"
     export CONTAINER_ENGINE="mock-container"
     export MOCK_CONTAINER_MODE=""
     export MOCK_BIN
+    export POLICY_BEHAVIOR_OLD_IMAGES_FILE="${TMPDIR}/old-images.json"
     export CRANE_COUNT_DIR="${TMPDIR}/crane-counts"
     mkdir -p "$CRANE_COUNT_DIR"
+
+    cat > "$POLICY_BEHAVIOR_OLD_IMAGES_FILE" <<'EOF'
+{
+  "policy": [{
+    "image": "quay.io/conforma/release-policy",
+    "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  }, {
+    "image": "quay.io/conforma/task-policy",
+    "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  }, {
+    "image": "quay.io/conforma/build-task-policy",
+    "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  }],
+  "components": [{
+    "image": "quay.io/conforma/cli",
+    "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  }, {
+    "image": "quay.io/conforma/tekton-task",
+    "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  }]
+}
+EOF
 
     cat > "${MOCK_BIN}/crane" <<'EOF'
 #!/usr/bin/env bash
