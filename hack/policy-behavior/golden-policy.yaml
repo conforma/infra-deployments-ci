@@ -1,0 +1,16 @@
+---
+apiVersion: appstudio.redhat.com/v1alpha1
+kind: EnterpriseContractPolicy
+metadata:
+  name: golden-policy
+spec:
+  description: 'Rules for golden container tests'
+  sources:
+    - name: Release Policies
+      data:
+        - oci::quay.io/redhat-konflux/policy-data:latest
+      policy:
+        - oci::quay.io/conforma/release-policy:konflux
+      config:
+        include:
+          - '@redhat'

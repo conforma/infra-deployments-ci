@@ -46,6 +46,8 @@ RELEASE_DIR="${1:-${REPO_ROOT}/releases/$(date -u +%Y-%m-%dT%H:%M:%S)}"
 
 TMPDIR_BASE=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_BASE"' EXIT
+CANDIDATE_IMAGES_FILE="${TMPDIR_BASE}/images.json"
+POLICY_BEHAVIOR_FILE="${TMPDIR_BASE}/policy-behavior.md"
 
 # ---------------------------------------------------------------------------
 # Images to include in the changelog
@@ -201,6 +203,43 @@ render_rule_diff() {
     fi
 }
 
+write_candidate_images() {
+    local output_file="$1"
+    local images_json='{"policy":[],"components":[]}'
+    local entry image mirror digest
+
+    for entry in "${POLICY_IMAGE_ENTRIES[@]}"; do
+        IFS='|' read -r image mirror <<< "$entry"
+        echo "  resolving ${image}:latest..." >&2
+        if ! digest=$(crane digest "${image}:latest" 2>/dev/null); then
+            echo "ERROR: Failed to resolve ${image}:latest" >&2
+            return 1
+        fi
+        if [[ ! "$digest" =~ ^sha256:[0-9a-fA-F]{64}$ ]]; then
+            echo "ERROR: crane returned an invalid digest for ${image}:latest: ${digest}" >&2
+            return 1
+        fi
+        images_json=$(jq --arg img "$image" --arg dig "$digest" --arg mir "$mirror" \
+            '.policy += [{"image": $img, "digest": $dig, "mirrors": [$mir]}]' <<< "$images_json")
+    done
+
+    for image in "${COMPONENT_IMAGES[@]}"; do
+        echo "  resolving ${image}:latest..." >&2
+        if ! digest=$(crane digest "${image}:latest" 2>/dev/null); then
+            echo "ERROR: Failed to resolve ${image}:latest" >&2
+            return 1
+        fi
+        if [[ ! "$digest" =~ ^sha256:[0-9a-fA-F]{64}$ ]]; then
+            echo "ERROR: crane returned an invalid digest for ${image}:latest: ${digest}" >&2
+            return 1
+        fi
+        images_json=$(jq --arg img "$image" --arg dig "$digest" \
+            '.components += [{"image": $img, "digest": $dig}]' <<< "$images_json")
+    done
+
+    echo "$images_json" | jq . > "$output_file"
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -296,33 +335,24 @@ fi
 
 echo "" >&2
 
-# --- Write images.json ---
-
 if [[ "$RELEASE_DIR" != "-" ]]; then
     echo "Writing images.json..." >&2
+    CANDIDATE_IMAGES_FILE="${RELEASE_DIR}/images.json"
+fi
 
-    IMAGES_JSON='{"policy":[],"components":[]}'
+write_candidate_images "$CANDIDATE_IMAGES_FILE"
 
-    for entry in "${POLICY_IMAGE_ENTRIES[@]}"; do
-        IFS='|' read -r image mirror <<< "$entry"
-        digest=$(crane digest "${image}:latest" 2>/dev/null)
-        IMAGES_JSON=$(echo "$IMAGES_JSON" | jq \
-            --arg img "$image" \
-            --arg dig "$digest" \
-            --arg mir "$mirror" \
-            '.policy += [{"image": $img, "digest": $dig, "mirrors": [$mir]}]')
-    done
+echo "" >&2
+echo "Comparing policy behavior..." >&2
+if ! "${SCRIPT_DIR}/policy-behavior/compare-policy-behavior.sh" \
+    --report "$POLICY_BEHAVIOR_FILE" \
+    "$CANDIDATE_IMAGES_FILE" > /dev/null; then
+    echo "ERROR: Policy behavior comparison failed" >&2
+    exit 1
+fi
+cat "$POLICY_BEHAVIOR_FILE"
 
-    for image in "${COMPONENT_IMAGES[@]}"; do
-        digest=$(crane digest "${image}:latest" 2>/dev/null)
-        IMAGES_JSON=$(echo "$IMAGES_JSON" | jq \
-            --arg img "$image" \
-            --arg dig "$digest" \
-            '.components += [{"image": $img, "digest": $dig}]')
-    done
-
-    echo "$IMAGES_JSON" | jq . > "${RELEASE_DIR}/images.json"
-
+if [[ "$RELEASE_DIR" != "-" ]]; then
     echo "Release written to ${RELEASE_DIR}/" >&2
 fi
 echo "Done." >&2
