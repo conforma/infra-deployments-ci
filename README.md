@@ -14,8 +14,10 @@ generation.
 
 The target images, display names, and policy collections are defined in
 [`hack/policy-behavior/targets.json`](hack/policy-behavior/targets.json).
-Each validation mounts [`golden-policy.yaml`](golden-policy.yaml) and injects
-the release-policy reference for that run and the collection for that target.
+Each validation mounts
+[`hack/policy-behavior/golden-policy.yaml`](hack/policy-behavior/golden-policy.yaml)
+and injects the release-policy reference for that run and the collection for
+that target.
 
 ### Prerequisites
 
@@ -69,7 +71,7 @@ The comparison uses:
   `images.json`;
 - digest-pinned Golden container and Golden RPM images resolved during the
   comparison;
-- the policy data configured by `golden-policy.yaml`; and
+- the policy data configured by `hack/policy-behavior/golden-policy.yaml`; and
 - a rendered policy file whose `spec.sources[0].policy` matches the release and
   whose `spec.sources[0].config.include` matches the target image.
 

@@ -24,7 +24,7 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO_ROOT=$(cd "${SCRIPT_DIR}/../.." && pwd)
 
 TARGETS_FILE="${SCRIPT_DIR}/targets.json"
-POLICY_TEMPLATE="${REPO_ROOT}/golden-policy.yaml"
+POLICY_TEMPLATE="${SCRIPT_DIR}/golden-policy.yaml"
 REPORT_FILE="-"
 CONTAINER_ENGINE="${CONTAINER_ENGINE:-docker}"
 EFFECTIVE_TIME="${POLICY_BEHAVIOR_EFFECTIVE_TIME:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
