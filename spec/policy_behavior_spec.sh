@@ -144,6 +144,7 @@ EOF
     The contents of file "${VALIDATION_LOG}" should include "quay.io/conforma/cli@sha256:4444444444444444444444444444444444444444444444444444444444444444"
     The contents of file "${VALIDATION_LOG}" should include "oci::quay.io/conforma/release-policy@sha256:2222222222222222222222222222222222222222222222222222222222222222"
     The contents of file "${VALIDATION_LOG}" should include "oci::quay.io/conforma/release-policy@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    The contents of file "${VALIDATION_LOG}" should include "--allow-past-effective-time"
     The contents of file "${VALIDATION_LOG}" should include "@redhat"
     The contents of file "${VALIDATION_LOG}" should include "@redhat_rpms"
     The contents of file "${TMPDIR}/report.md" should include "Added violations"

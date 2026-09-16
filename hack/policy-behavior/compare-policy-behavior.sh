@@ -277,6 +277,7 @@ run_validation() {
         --show-warnings
         --info
         --effective-time "$EFFECTIVE_TIME"
+        --allow-past-effective-time
         --timeout 30m
         --output json
     )
