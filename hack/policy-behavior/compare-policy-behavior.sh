@@ -37,11 +37,15 @@ usage() {
     cat <<EOF
 Usage:
   $(basename "$0") [options] <candidate-images.json>
+  $(basename "$0") [options] <old-images.json> <new-images.json>
 
-Compare current and candidate policy behavior for the targets in targets.json.
+Compare current and candidate, or old and new, policy behavior for the targets
+in targets.json.
 
 Arguments:
   candidate-images.json  Generated release images.json containing CLI and policy digests
+  old-images.json        Older release images.json for an explicit release comparison
+  new-images.json        Newer release images.json for an explicit release comparison
 
 Options:
   --targets FILE             Target definitions (default: ${TARGETS_FILE})
@@ -102,10 +106,30 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-[[ $# -eq 1 ]] || { usage >&2; die "Provide the candidate images.json file"; }
-CANDIDATE_IMAGES_FILE="$1"
+case "$#" in
+    1)
+        BEFORE_IMAGES_FILE=""
+        AFTER_IMAGES_FILE="$1"
+        BEFORE_LABEL="Current"
+        AFTER_LABEL="Candidate"
+        ;;
+    2)
+        BEFORE_IMAGES_FILE="$1"
+        AFTER_IMAGES_FILE="$2"
+        BEFORE_LABEL="Old"
+        AFTER_LABEL="New"
+        ;;
+    *)
+        usage >&2
+        die "Provide either candidate images.json or old and new images.json files"
+        ;;
+esac
 
-[[ -f "$CANDIDATE_IMAGES_FILE" ]] || die "Candidate images.json does not exist: ${CANDIDATE_IMAGES_FILE}"
+if [[ -n "$BEFORE_IMAGES_FILE" ]]; then
+    [[ -f "$BEFORE_IMAGES_FILE" ]] || die "Old images.json does not exist: ${BEFORE_IMAGES_FILE}"
+fi
+
+[[ -f "$AFTER_IMAGES_FILE" ]] || die "${AFTER_LABEL} images.json does not exist: ${AFTER_IMAGES_FILE}"
 [[ -f "$TARGETS_FILE" ]] || die "Target definitions do not exist: ${TARGETS_FILE}"
 [[ -f "$POLICY_TEMPLATE" ]] || die "Policy template does not exist: ${POLICY_TEMPLATE}"
 [[ -f "$PUBLIC_KEY_FILE" ]] || die "Public key does not exist: ${PUBLIC_KEY_FILE}"
@@ -114,9 +138,15 @@ for command in jq yq crane "$CONTAINER_ENGINE"; do
     command -v "$command" >/dev/null 2>&1 || die "Required command not found: ${command}"
 done
 
+if [[ -n "$BEFORE_IMAGES_FILE" ]] && \
+    ! jq -e 'type == "object" and (.policy | type == "array") and (.components | type == "array")' \
+        "$BEFORE_IMAGES_FILE" >/dev/null 2>&1; then
+    die "Old images.json is invalid or is missing policy/components arrays: ${BEFORE_IMAGES_FILE}"
+fi
+
 if ! jq -e 'type == "object" and (.policy | type == "array") and (.components | type == "array")' \
-    "$CANDIDATE_IMAGES_FILE" >/dev/null 2>&1; then
-    die "Candidate images.json is invalid or is missing policy/components arrays: ${CANDIDATE_IMAGES_FILE}"
+    "$AFTER_IMAGES_FILE" >/dev/null 2>&1; then
+    die "${AFTER_LABEL} images.json is invalid or is missing policy/components arrays: ${AFTER_IMAGES_FILE}"
 fi
 
 if ! jq -e '
@@ -320,20 +350,25 @@ render_labels() {
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
 
-current_cli_ref="quay.io/conforma/cli:konflux"
-candidate_cli_ref=$(image_ref "$CANDIDATE_IMAGES_FILE" components quay.io/conforma/cli "candidate CLI")
-current_policy_ref="quay.io/conforma/release-policy:konflux"
-candidate_policy_ref=$(image_ref "$CANDIDATE_IMAGES_FILE" policy quay.io/conforma/release-policy "candidate release policy")
+if [[ -n "$BEFORE_IMAGES_FILE" ]]; then
+    before_cli_ref=$(image_ref "$BEFORE_IMAGES_FILE" components quay.io/conforma/cli "old CLI")
+    before_policy_ref=$(image_ref "$BEFORE_IMAGES_FILE" policy quay.io/conforma/release-policy "old release policy")
+else
+    before_cli_ref="quay.io/conforma/cli:konflux"
+    before_policy_ref="quay.io/conforma/release-policy:konflux"
+fi
+after_cli_ref=$(image_ref "$AFTER_IMAGES_FILE" components quay.io/conforma/cli "${AFTER_LABEL} CLI")
+after_policy_ref=$(image_ref "$AFTER_IMAGES_FILE" policy quay.io/conforma/release-policy "${AFTER_LABEL} release policy")
 policy_data=$(yq -o=json -I=0 '.spec.sources[0].data' "$POLICY_TEMPLATE")
 
 report_file="${WORK_DIR}/policy-behavior.md"
 {
     echo "## Policy Behavior Changes"
     echo
-    echo "- Current CLI: \`${current_cli_ref}\`"
-    echo "- Candidate CLI: \`${candidate_cli_ref}\`"
-    echo "- Current policy: \`oci::${current_policy_ref}\`"
-    echo "- Candidate policy: \`oci::${candidate_policy_ref}\`"
+    echo "- ${BEFORE_LABEL} CLI: \`${before_cli_ref}\`"
+    echo "- ${AFTER_LABEL} CLI: \`${after_cli_ref}\`"
+    echo "- ${BEFORE_LABEL} policy: \`oci::${before_policy_ref}\`"
+    echo "- ${AFTER_LABEL} policy: \`oci::${after_policy_ref}\`"
     echo "- Effective time: \`${EFFECTIVE_TIME}\`"
     echo "- Policy template: \`${POLICY_TEMPLATE#${REPO_ROOT}/}\`"
     echo "- Policy data: \`${policy_data}\`"
@@ -349,19 +384,19 @@ while IFS= read -r target_json; do
     target_ref="$(image_repository "$target_image")@${target_digest}"
 
     safe_name=$(printf '%s' "$target_name" | tr -cs '[:alnum:]_.-' '_')
-    current_report="${WORK_DIR}/${safe_name}-current.json"
-    candidate_report="${WORK_DIR}/${safe_name}-candidate.json"
-    current_normalized="${WORK_DIR}/${safe_name}-current-normalized.json"
-    candidate_normalized="${WORK_DIR}/${safe_name}-candidate-normalized.json"
+    before_report="${WORK_DIR}/${safe_name}-before.json"
+    after_report="${WORK_DIR}/${safe_name}-after.json"
+    before_normalized="${WORK_DIR}/${safe_name}-before-normalized.json"
+    after_normalized="${WORK_DIR}/${safe_name}-after-normalized.json"
 
-    run_validation "$display_name" "$target_ref" "$current_cli_ref" "$current_policy_ref" \
-        "$collection" "$current_report"
-    run_validation "$display_name" "$target_ref" "$candidate_cli_ref" "$candidate_policy_ref" \
-        "$collection" "$candidate_report"
+    run_validation "$display_name" "$target_ref" "$before_cli_ref" "$before_policy_ref" \
+        "$collection" "$before_report"
+    run_validation "$display_name" "$target_ref" "$after_cli_ref" "$after_policy_ref" \
+        "$collection" "$after_report"
 
-    normalize_report "$current_report" "$current_normalized"
-    normalize_report "$candidate_report" "$candidate_normalized"
-    changes=$(diff_results "$current_normalized" "$candidate_normalized")
+    normalize_report "$before_report" "$before_normalized"
+    normalize_report "$after_report" "$after_normalized"
+    changes=$(diff_results "$before_normalized" "$after_normalized")
 
     {
         echo "### ${display_name}"

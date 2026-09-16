@@ -81,6 +81,8 @@ done
 
 if [[ "$args" == *"quay.io/conforma/cli:konflux"* ]]; then
   expected_policy="oci::quay.io/conforma/release-policy:konflux"
+elif [[ "$args" == *"cli@sha256:1111111111111111111111111111111111111111111111111111111111111111"* ]]; then
+  expected_policy="oci::quay.io/conforma/release-policy@sha256:2222222222222222222222222222222222222222222222222222222222222222"
 else
   expected_policy="oci::quay.io/conforma/release-policy@sha256:3333333333333333333333333333333333333333333333333333333333333333"
 fi
@@ -137,6 +139,19 @@ EOF
     chmod +x "${MOCK_BIN}/mock-container"
     export PATH="${MOCK_BIN}:${PATH}"
 
+    cat > "${TMPDIR}/old-images.json" <<'EOF'
+{
+  "policy": [{
+    "image": "quay.io/conforma/release-policy",
+    "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+  }],
+  "components": [{
+    "image": "quay.io/conforma/cli",
+    "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  }]
+}
+EOF
+
     cat > "${TMPDIR}/candidate-images.json" <<'EOF'
 {
   "policy": [{
@@ -161,9 +176,9 @@ EOF
   It "runs four current and candidate validations with shared inputs and renders changes"
     When run script "$SCRIPT" --report "${TMPDIR}/report.md" "${TMPDIR}/candidate-images.json"
     The status should be success
-    The contents of file "${VALIDATION_COUNT_FILE}" should equal 4
     The output should include "Policy Behavior Changes"
     The stderr should include "Running Golden container"
+    The contents of file "${VALIDATION_COUNT_FILE}" should equal 4
     The contents of file "${VALIDATION_LOG}" should include "validate image"
     The contents of file "${VALIDATION_LOG}" should include "quay.io/conforma/cli:konflux"
     The contents of file "${VALIDATION_LOG}" should include "quay.io/conforma/cli@sha256:4444444444444444444444444444444444444444444444444444444444444444"
@@ -180,6 +195,20 @@ EOF
     The contents of file "${TMPDIR}/report.md" should include "new.container"
     The contents of file "${TMPDIR}/report.md" should include "No behavior changes."
     The contents of file "${TMPDIR}/report.md" should include "2026-09-16T15:00:00Z"
+  End
+
+  It "supports an explicit old and new images.json comparison"
+    When run script "$SCRIPT" --report "${TMPDIR}/report.md" "${TMPDIR}/old-images.json" "${TMPDIR}/candidate-images.json"
+    The status should be success
+    The output should include "Policy Behavior Changes"
+    The stderr should include "Running Golden container"
+    The contents of file "${VALIDATION_COUNT_FILE}" should equal 4
+    The contents of file "${VALIDATION_LOG}" should include "quay.io/conforma/cli@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    The contents of file "${VALIDATION_LOG}" should include "quay.io/conforma/cli@sha256:4444444444444444444444444444444444444444444444444444444444444444"
+    The contents of file "${POLICY_LOG}" should include "oci::quay.io/conforma/release-policy@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    The contents of file "${POLICY_LOG}" should include "oci::quay.io/conforma/release-policy@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+    The contents of file "${TMPDIR}/report.md" should include "Old CLI"
+    The contents of file "${TMPDIR}/report.md" should include "New CLI"
   End
 
   It "preserves warning-to-violation changes and deduplicates architectures"

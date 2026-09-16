@@ -91,6 +91,15 @@ manifest:
   releases/my-candidate/images.json
 ```
 
+To compare two generated releases directly, provide both manifests:
+
+```bash
+./hack/policy-behavior/compare-policy-behavior.sh \
+  --container-engine podman \
+  releases/2026-08-11T17:36:11/images.json \
+  releases/2026-09-10T17:30:44/images.json
+```
+
 The comparison report retains uncoded failures by their message and
 deduplicates results repeated across multi-architecture components. A warning
 that becomes a violation appears in both the removed-warnings and
