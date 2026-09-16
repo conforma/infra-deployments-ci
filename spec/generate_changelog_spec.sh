@@ -124,4 +124,18 @@ EOF
     The path "${TMPDIR}/failed-release/changelog.md" should not be file
     The stderr should include "Policy behavior comparison failed"
   End
+
+  It "selects only timestamped finalized releases as the automatic baseline"
+    unset POLICY_BEHAVIOR_OLD_IMAGES_FILE
+    export POLICY_BEHAVIOR_RELEASES_DIR="${TMPDIR}/releases"
+    mkdir -p "${POLICY_BEHAVIOR_RELEASES_DIR}/2026-08-11T17:36:11"
+    mkdir -p "${POLICY_BEHAVIOR_RELEASES_DIR}/my-candidate"
+    cp "${TMPDIR}/old-images.json" "${POLICY_BEHAVIOR_RELEASES_DIR}/2026-08-11T17:36:11/images.json"
+    printf '%s\n' 'not-json' > "${POLICY_BEHAVIOR_RELEASES_DIR}/my-candidate/images.json"
+    When run script "$SCRIPT" "${TMPDIR}/automatic-release"
+    The status should be success
+    The path "${TMPDIR}/automatic-release/images.json" should be file
+    The path "${TMPDIR}/automatic-release/changelog.md" should be file
+    The stderr should include "Release written to"
+  End
 End

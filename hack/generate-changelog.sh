@@ -43,6 +43,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 RELEASE_DIR="${1:-${REPO_ROOT}/releases/$(date -u +%Y-%m-%dT%H:%M:%S)}"
+RELEASES_DIR="${POLICY_BEHAVIOR_RELEASES_DIR:-${REPO_ROOT}/releases}"
 
 TMPDIR_BASE=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_BASE"' EXIT
@@ -239,6 +240,7 @@ find_previous_images_file() {
     local release_dir="$1"
     local excluded_path=""
     local candidate
+    local release_name
 
     if [[ "$release_dir" != "-" ]]; then
         if [[ "$release_dir" == /* ]]; then
@@ -248,12 +250,14 @@ find_previous_images_file() {
         fi
     fi
 
-    [[ -d "${REPO_ROOT}/releases" ]] || return 1
+    [[ -d "$RELEASES_DIR" ]] || return 1
     while IFS= read -r candidate; do
+        release_name=$(basename "$(dirname "$candidate")")
+        [[ "$release_name" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}$ ]] || continue
         [[ -n "$excluded_path" && "$candidate" == "$excluded_path" ]] && continue
         printf '%s\n' "$candidate"
         return 0
-    done < <(find "${REPO_ROOT}/releases" -mindepth 2 -maxdepth 2 -type f -name images.json | sort -r)
+    done < <(find "$RELEASES_DIR" -mindepth 2 -maxdepth 2 -type f -name images.json | sort -r)
     return 1
 }
 
@@ -299,7 +303,7 @@ resolve_candidate_images() {
 
 if [[ -z "$OLD_IMAGES_FILE" ]]; then
     if ! OLD_IMAGES_FILE=$(find_previous_images_file "$RELEASE_DIR"); then
-        echo "ERROR: Could not find a previous release images.json under ${REPO_ROOT}/releases" >&2
+        echo "ERROR: Could not find a finalized release images.json under ${RELEASES_DIR}" >&2
         exit 1
     fi
 elif [[ "$OLD_IMAGES_FILE" != /* ]]; then
