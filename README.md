@@ -4,13 +4,13 @@ Keep infra-deployments updated with the latest Enterprise Contract components.
 
 ## Generate a policy behavior changelog
 
-`hack/generate-changelog.sh` compares the CLI and release policy digests in the
-previous release's `images.json` with the candidate digests resolved from the
-new `:latest` images. It validates the Golden container and Golden RPM targets
-four times in total, then adds a `Policy Behavior Changes` section to the
-changelog. Policy behavior differences are informational; failed image pulls,
-invalid policy configuration, command failures, and malformed reports stop
-generation.
+`hack/generate-changelog.sh` retains its existing release flow: it compares
+the current `:konflux` images with the candidate `:latest` images, writes
+`changelog.md` and `images.json` to the requested release directory, and now
+also appends a `Policy Behavior Changes` section to the changelog. That section
+validates the Golden container and Golden RPM targets four times in total.
+Policy behavior differences are informational; failed image pulls, invalid
+policy configuration, command failures, and malformed reports return an error.
 
 The target images, display names, and policy collections are defined in
 [`hack/policy-behavior/targets.json`](hack/policy-behavior/targets.json).
@@ -52,23 +52,21 @@ export CONTAINER_ENGINE=podman
 export REGISTRY_AUTH_FILE="$HOME/.docker/config.json"
 ```
 
-### Release reference selection
+### Release output and comparison inputs
 
-At the start of generation, every candidate `:latest` image listed by the
-release configuration is resolved exactly once and recorded in a temporary
-`images.json`. The previous release's `images.json` is selected from the latest
-timestamped release directory; non-final directories such as `my-candidate`
-are ignored. Set `POLICY_BEHAVIOR_OLD_IMAGES_FILE` to override that selection.
-All later operations use digest-pinned references from the old and new
-manifests. On success, the new file is published as the release's `images.json`;
-neither it nor `changelog.md` is published after a failed run.
+The existing image, source-commit, and policy-rule sections continue comparing
+`:konflux` with `:latest`. The generated `images.json` records the candidate
+digests exactly as before. The behavior comparison then uses the current
+`:konflux` CLI and release policy together with the candidate CLI and policy
+digests from that generated file. The release files are created before the
+behavior comparison, so they remain available for review if that final step
+reports an operational error.
 
 The comparison uses:
 
-- the exact digest-pinned CLI and policy references from the old
-  `images.json`;
-- the exact digest-pinned CLI and policy references from the new
-  `images.json`;
+- the current `quay.io/conforma/cli:konflux` and
+  `oci::quay.io/conforma/release-policy:konflux` references;
+- the exact candidate CLI and policy digests from the generated `images.json`;
 - digest-pinned Golden container and Golden RPM images resolved during the
   comparison;
 - the policy data configured by `hack/policy-behavior/golden-policy.yaml`; and
@@ -84,13 +82,12 @@ Run the generator from the repository root:
 ```
 
 The final form writes the changelog to stdout and does not publish
-`images.json`. For a direct behavior comparison, provide the old and new
-manifests:
+`images.json`. For a direct behavior comparison, provide a generated candidate
+manifest:
 
 ```bash
 ./hack/policy-behavior/compare-policy-behavior.sh \
   --container-engine podman \
-  releases/2026-08-11T17:36:11/images.json \
   releases/my-candidate/images.json
 ```
 

@@ -79,8 +79,8 @@ done
   cat "$policy_file"
 } >> "$POLICY_LOG"
 
-if [[ "$args" == *"cli@sha256:1111111111111111111111111111111111111111111111111111111111111111"* ]]; then
-  expected_policy="oci::quay.io/conforma/release-policy@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+if [[ "$args" == *"quay.io/conforma/cli:konflux"* ]]; then
+  expected_policy="oci::quay.io/conforma/release-policy:konflux"
 else
   expected_policy="oci::quay.io/conforma/release-policy@sha256:3333333333333333333333333333333333333333333333333333333333333333"
 fi
@@ -137,20 +137,7 @@ EOF
     chmod +x "${MOCK_BIN}/mock-container"
     export PATH="${MOCK_BIN}:${PATH}"
 
-    cat > "${TMPDIR}/old-images.json" <<'EOF'
-{
-  "policy": [{
-    "image": "quay.io/conforma/release-policy",
-    "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
-  }],
-  "components": [{
-    "image": "quay.io/conforma/cli",
-    "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
-  }]
-}
-EOF
-
-    cat > "${TMPDIR}/new-images.json" <<'EOF'
+    cat > "${TMPDIR}/candidate-images.json" <<'EOF'
 {
   "policy": [{
     "image": "quay.io/conforma/release-policy",
@@ -171,18 +158,18 @@ EOF
   Before "setup"
   After "cleanup"
 
-  It "runs four validations with shared pinned inputs and renders changes"
-    When run script "$SCRIPT" --report "${TMPDIR}/report.md" "${TMPDIR}/old-images.json" "${TMPDIR}/new-images.json"
+  It "runs four current and candidate validations with shared inputs and renders changes"
+    When run script "$SCRIPT" --report "${TMPDIR}/report.md" "${TMPDIR}/candidate-images.json"
     The status should be success
     The contents of file "${VALIDATION_COUNT_FILE}" should equal 4
     The output should include "Policy Behavior Changes"
     The stderr should include "Running Golden container"
     The contents of file "${VALIDATION_LOG}" should include "validate image"
-    The contents of file "${VALIDATION_LOG}" should include "quay.io/conforma/cli@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    The contents of file "${VALIDATION_LOG}" should include "quay.io/conforma/cli:konflux"
     The contents of file "${VALIDATION_LOG}" should include "quay.io/conforma/cli@sha256:4444444444444444444444444444444444444444444444444444444444444444"
     The contents of file "${VALIDATION_LOG}" should include "--policy /workspace/golden-policy.yaml"
     The contents of file "${POLICY_LOG}" should include "kind: EnterpriseContractPolicy"
-    The contents of file "${POLICY_LOG}" should include "oci::quay.io/conforma/release-policy@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+    The contents of file "${POLICY_LOG}" should include "oci::quay.io/conforma/release-policy:konflux"
     The contents of file "${POLICY_LOG}" should include "oci::quay.io/conforma/release-policy@sha256:3333333333333333333333333333333333333333333333333333333333333333"
     The contents of file "${POLICY_LOG}" should include "oci::quay.io/redhat-konflux/policy-data:latest"
     The contents of file "${VALIDATION_LOG}" should include "--allow-past-effective-time"
@@ -196,7 +183,7 @@ EOF
   End
 
   It "preserves warning-to-violation changes and deduplicates architectures"
-    When run script "$SCRIPT" --report "${TMPDIR}/report.md" "${TMPDIR}/old-images.json" "${TMPDIR}/new-images.json"
+    When run script "$SCRIPT" --report "${TMPDIR}/report.md" "${TMPDIR}/candidate-images.json"
     The status should be success
     The output should include "Policy Behavior Changes"
     The stderr should include "Running Golden RPM"
@@ -204,37 +191,37 @@ EOF
     The contents of file "${TMPDIR}/report.md" should include "new uncoded warning"
   End
 
-  It "fails for a missing new CLI entry"
-    jq 'del(.components)' "${TMPDIR}/new-images.json" > "${TMPDIR}/missing-cli.json"
-    When run script "$SCRIPT" "${TMPDIR}/old-images.json" "${TMPDIR}/missing-cli.json"
+  It "fails for a missing candidate CLI entry"
+    jq 'del(.components)' "${TMPDIR}/candidate-images.json" > "${TMPDIR}/missing-cli.json"
+    When run script "$SCRIPT" "${TMPDIR}/missing-cli.json"
     The status should be failure
     The stderr should include "missing policy/components arrays"
   End
 
-  It "fails for a missing new policy entry"
-    jq 'del(.policy)' "${TMPDIR}/new-images.json" > "${TMPDIR}/missing-policy.json"
-    When run script "$SCRIPT" "${TMPDIR}/old-images.json" "${TMPDIR}/missing-policy.json"
+  It "fails for a missing candidate policy entry"
+    jq 'del(.policy)' "${TMPDIR}/candidate-images.json" > "${TMPDIR}/missing-policy.json"
+    When run script "$SCRIPT" "${TMPDIR}/missing-policy.json"
     The status should be failure
     The stderr should include "missing policy/components arrays"
   End
 
-  It "fails for invalid new JSON"
+  It "fails for invalid candidate JSON"
     printf '%s\n' 'not-json' > "${TMPDIR}/invalid.json"
-    When run script "$SCRIPT" "${TMPDIR}/old-images.json" "${TMPDIR}/invalid.json"
+    When run script "$SCRIPT" "${TMPDIR}/invalid.json"
     The status should be failure
     The stderr should include "invalid or is missing policy/components arrays"
   End
 
   It "fails for a malformed validation report"
     export MOCK_CONTAINER_MODE="malformed"
-    When run script "$SCRIPT" "${TMPDIR}/old-images.json" "${TMPDIR}/new-images.json"
+    When run script "$SCRIPT" "${TMPDIR}/candidate-images.json"
     The status should be failure
     The stderr should include "malformed JSON report"
   End
 
   It "fails for an operational validation error"
     export MOCK_CONTAINER_MODE="fail"
-    When run script "$SCRIPT" "${TMPDIR}/old-images.json" "${TMPDIR}/new-images.json"
+    When run script "$SCRIPT" "${TMPDIR}/candidate-images.json"
     The status should be failure
     The stderr should include "validation command failed"
     The stderr should include "image pull failed"
@@ -242,7 +229,7 @@ EOF
 
   It "fails before validation for an invalid policy template"
     printf '%s\n' 'kind: ConfigMap' > "${TMPDIR}/invalid-policy.yaml"
-    When run script "$SCRIPT" --policy-template "${TMPDIR}/invalid-policy.yaml" "${TMPDIR}/old-images.json" "${TMPDIR}/new-images.json"
+    When run script "$SCRIPT" --policy-template "${TMPDIR}/invalid-policy.yaml" "${TMPDIR}/candidate-images.json"
     The status should be failure
     The stderr should include "Policy template is not a valid EnterpriseContractPolicy"
     The path "${VALIDATION_LOG}" should not be file
@@ -250,14 +237,14 @@ EOF
 
   It "fails when a target digest cannot be resolved"
     export MOCK_CRANE_MODE="fail"
-    When run script "$SCRIPT" "${TMPDIR}/old-images.json" "${TMPDIR}/new-images.json"
+    When run script "$SCRIPT" "${TMPDIR}/candidate-images.json"
     The status should be failure
     The stderr should include "Failed to resolve image digest"
   End
 
   It "renders no-change output when both releases match"
     export MOCK_CONTAINER_MODE="no-change"
-    When run script "$SCRIPT" "${TMPDIR}/old-images.json" "${TMPDIR}/new-images.json"
+    When run script "$SCRIPT" "${TMPDIR}/candidate-images.json"
     The status should be success
     The output should include "No behavior changes."
     The stderr should include "Running Golden RPM"

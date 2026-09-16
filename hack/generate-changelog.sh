@@ -15,8 +15,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Generates a release changelog comparing the new image manifest resolved from
-# :latest against the previous release's images.json for all Conforma images.
+# Generates a release changelog comparing :latest (to be promoted) against
+# :konflux (current production) for all Conforma images.
 #
 # By default creates a release directory at releases/<YYYY-MM-DDTHH:MM:SS>/
 # containing changelog.md and images.json (machine-readable image inputs
@@ -43,14 +43,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 RELEASE_DIR="${1:-${REPO_ROOT}/releases/$(date -u +%Y-%m-%dT%H:%M:%S)}"
-RELEASES_DIR="${POLICY_BEHAVIOR_RELEASES_DIR:-${REPO_ROOT}/releases}"
 
 TMPDIR_BASE=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_BASE"' EXIT
 CANDIDATE_IMAGES_FILE="${TMPDIR_BASE}/images.json"
-CHANGELOG_FILE="${TMPDIR_BASE}/changelog.md"
 POLICY_BEHAVIOR_FILE="${TMPDIR_BASE}/policy-behavior.md"
-OLD_IMAGES_FILE="${POLICY_BEHAVIOR_OLD_IMAGES_FILE:-}"
 
 # ---------------------------------------------------------------------------
 # Images to include in the changelog
@@ -112,8 +109,8 @@ get_revision() {
             return 1
         fi
 
-        local repo="${image%@*}"
-        repo="${repo%:*}"
+        local repo="${image%:*}"
+        repo="${repo%@*}"
         manifest=$(crane manifest "${repo}@${amd64_digest}" 2>/dev/null)
     fi
 
@@ -156,8 +153,6 @@ get_merge_commits() {
 # Outputs nothing if there are no changes.
 render_rule_diff() {
     local image="$1"
-    local before_ref="$2"
-    local after_ref="$3"
     local name="${image##*/}"
 
     echo "  diffing ${name}..." >&2
@@ -165,7 +160,7 @@ render_rule_diff() {
     diff_json=$(cd "${REPO_ROOT}/hack/policy-rule-diff" && go run . \
         -bundle -json \
         -doc-base-url "https://conforma.dev/docs/policy/packages" \
-        "${before_ref}" "${after_ref}" 2>/dev/null)
+        "${image}:konflux" "${image}:latest" 2>/dev/null)
 
     local added removed
     added=$(echo "$diff_json" | jq '.added | length')
@@ -208,60 +203,8 @@ render_rule_diff() {
     fi
 }
 
-candidate_digest_for() {
-    local image="$1"
-    jq -er --arg image "$image" \
-        '.policy[]?, .components[]? | select(.image == $image) | .digest' \
-        "$CANDIDATE_IMAGES_FILE"
-}
-
-candidate_ref_for() {
-    local image="$1"
-    local digest
-    digest=$(candidate_digest_for "$image")
-    printf '%s@%s\n' "$image" "$digest"
-}
-
-old_digest_for() {
-    local image="$1"
-    jq -er --arg image "$image" \
-        '.policy[]?, .components[]? | select(.image == $image) | .digest' \
-        "$OLD_IMAGES_FILE"
-}
-
-old_ref_for() {
-    local image="$1"
-    local digest
-    digest=$(old_digest_for "$image")
-    printf '%s@%s\n' "$image" "$digest"
-}
-
-find_previous_images_file() {
-    local release_dir="$1"
-    local excluded_path=""
-    local candidate
-    local release_name
-
-    if [[ "$release_dir" != "-" ]]; then
-        if [[ "$release_dir" == /* ]]; then
-            excluded_path="${release_dir%/}/images.json"
-        else
-            excluded_path="${REPO_ROOT}/${release_dir%/}/images.json"
-        fi
-    fi
-
-    [[ -d "$RELEASES_DIR" ]] || return 1
-    while IFS= read -r candidate; do
-        release_name=$(basename "$(dirname "$candidate")")
-        [[ "$release_name" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}$ ]] || continue
-        [[ -n "$excluded_path" && "$candidate" == "$excluded_path" ]] && continue
-        printf '%s\n' "$candidate"
-        return 0
-    done < <(find "$RELEASES_DIR" -mindepth 2 -maxdepth 2 -type f -name images.json | sort -r)
-    return 1
-}
-
-resolve_candidate_images() {
+write_candidate_images() {
+    local output_file="$1"
     local images_json='{"policy":[],"components":[]}'
     local entry image mirror digest
 
@@ -294,40 +237,17 @@ resolve_candidate_images() {
             '.components += [{"image": $img, "digest": $dig}]' <<< "$images_json")
     done
 
-    echo "$images_json" | jq . > "$CANDIDATE_IMAGES_FILE"
+    echo "$images_json" | jq . > "$output_file"
 }
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
-if [[ -z "$OLD_IMAGES_FILE" ]]; then
-    if ! OLD_IMAGES_FILE=$(find_previous_images_file "$RELEASE_DIR"); then
-        echo "ERROR: Could not find a finalized release images.json under ${RELEASES_DIR}" >&2
-        exit 1
-    fi
-elif [[ "$OLD_IMAGES_FILE" != /* ]]; then
-    OLD_IMAGES_FILE="${REPO_ROOT}/${OLD_IMAGES_FILE}"
+if [[ "$RELEASE_DIR" != "-" ]]; then
+    mkdir -p "$RELEASE_DIR"
+    exec 1>"${RELEASE_DIR}/changelog.md"
 fi
-
-[[ -f "$OLD_IMAGES_FILE" ]] || {
-    echo "ERROR: Previous release images.json does not exist: ${OLD_IMAGES_FILE}" >&2
-    exit 1
-}
-
-if ! jq -e 'type == "object" and (.policy | type == "array") and (.components | type == "array")' \
-    "$OLD_IMAGES_FILE" >/dev/null 2>&1; then
-    echo "ERROR: Previous release images.json is invalid or is missing policy/components arrays: ${OLD_IMAGES_FILE}" >&2
-    exit 1
-fi
-
-resolve_candidate_images
-
-# Keep all changelog output in a temporary file. The final files are copied to
-# the release directory only after every section, including policy behavior,
-# has completed successfully.
-exec 3>&1
-exec 1>"$CHANGELOG_FILE"
 
 echo "Generating changelog..." >&2
 
@@ -341,7 +261,8 @@ echo "## Images"
 echo ""
 
 for image in "${ALL_IMAGES[@]}"; do
-    digest=$(candidate_digest_for "$image")
+    echo "  resolving ${image}:latest..." >&2
+    digest=$(crane digest "${image}:latest" 2>/dev/null)
     local_name="${image##*/}"
     echo "- **${local_name}** — \`${digest}\`"
 done
@@ -358,26 +279,24 @@ for entry in "${COMMIT_LOG_SOURCES[@]}"; do
     echo "Processing ${github_repo}..." >&2
 
     echo "  fetching revisions..." >&2
-    old_ref=$(old_ref_for "$image_repo")
-    candidate_ref=$(candidate_ref_for "$image_repo")
-    old_rev=$(get_revision "$old_ref")
-    new_rev=$(get_revision "$candidate_ref")
+    konflux_rev=$(get_revision "${image_repo}:konflux")
+    latest_rev=$(get_revision "${image_repo}:latest")
 
-    echo "  old: ${old_rev}" >&2
-    echo "  new: ${new_rev}" >&2
+    echo "  konflux: ${konflux_rev}" >&2
+    echo "  latest:  ${latest_rev}" >&2
 
     echo ""
     echo "### [${github_repo}](https://github.com/${github_repo})"
     echo ""
-    echo "Source commits: [\`${old_rev:0:8}..${new_rev:0:8}\`](https://github.com/${github_repo}/compare/${old_rev:0:8}...${new_rev:0:8})"
+    echo "Source commits: [\`${konflux_rev:0:8}..${latest_rev:0:8}\`](https://github.com/${github_repo}/compare/${konflux_rev:0:8}...${latest_rev:0:8})"
     echo ""
 
-    if [[ "$old_rev" == "$new_rev" ]]; then
+    if [[ "$konflux_rev" == "$latest_rev" ]]; then
         echo "No changes."
         continue
     fi
 
-    merge_commits=$(get_merge_commits "$github_repo" "$old_rev" "$new_rev")
+    merge_commits=$(get_merge_commits "$github_repo" "$konflux_rev" "$latest_rev")
 
     if [[ -z "$merge_commits" ]]; then
         echo "No merge commits."
@@ -399,8 +318,7 @@ echo ""
 echo "## Policy Rule Changes"
 
 # Render release-policy first (primary focus)
-render_rule_diff "${POLICY_IMAGES[0]}" \
-    "$(old_ref_for "${POLICY_IMAGES[0]}")" "$(candidate_ref_for "${POLICY_IMAGES[0]}")"
+render_rule_diff "${POLICY_IMAGES[0]}"
 
 # Render remaining policies in a collapsible section
 if [[ ${#POLICY_IMAGES[@]} -gt 1 ]]; then
@@ -409,7 +327,7 @@ if [[ ${#POLICY_IMAGES[@]} -gt 1 ]]; then
     echo "<summary>Task and build policy changes</summary>"
     echo ""
     for image in "${POLICY_IMAGES[@]:1}"; do
-        render_rule_diff "$image" "$(old_ref_for "$image")" "$(candidate_ref_for "$image")"
+        render_rule_diff "$image"
     done
     echo ""
     echo "</details>"
@@ -417,22 +335,24 @@ fi
 
 echo "" >&2
 
+if [[ "$RELEASE_DIR" != "-" ]]; then
+    echo "Writing images.json..." >&2
+    CANDIDATE_IMAGES_FILE="${RELEASE_DIR}/images.json"
+fi
+
+write_candidate_images "$CANDIDATE_IMAGES_FILE"
+
 echo "" >&2
 echo "Comparing policy behavior..." >&2
 if ! "${SCRIPT_DIR}/policy-behavior/compare-policy-behavior.sh" \
     --report "$POLICY_BEHAVIOR_FILE" \
-    "$OLD_IMAGES_FILE" "$CANDIDATE_IMAGES_FILE" > /dev/null; then
+    "$CANDIDATE_IMAGES_FILE" > /dev/null; then
     echo "ERROR: Policy behavior comparison failed" >&2
     exit 1
 fi
 cat "$POLICY_BEHAVIOR_FILE"
 
 if [[ "$RELEASE_DIR" != "-" ]]; then
-    mkdir -p "$RELEASE_DIR"
-    cp "$CHANGELOG_FILE" "${RELEASE_DIR}/changelog.md"
-    cp "$CANDIDATE_IMAGES_FILE" "${RELEASE_DIR}/images.json"
     echo "Release written to ${RELEASE_DIR}/" >&2
-else
-    cat "$CHANGELOG_FILE" >&3
 fi
 echo "Done." >&2

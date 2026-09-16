@@ -15,8 +15,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Compare policy behavior using the CLI and policy recorded in two release
-# images.json files.
+# Compare current :konflux policy behavior with the candidate CLI and policy
+# recorded in a release images.json file.
 
 set -euo pipefail
 
@@ -36,13 +36,12 @@ PUBLIC_KEY_FILE="${REPO_ROOT}/acceptance/pub.key"
 usage() {
     cat <<EOF
 Usage:
-  $(basename "$0") [options] <old-images.json> <new-images.json>
+  $(basename "$0") [options] <candidate-images.json>
 
-Compare old and new policy behavior for the targets in targets.json.
+Compare current and candidate policy behavior for the targets in targets.json.
 
 Arguments:
-  old-images.json  Older release images.json containing CLI and policy digests
-  new-images.json  Newer release images.json containing CLI and policy digests
+  candidate-images.json  Generated release images.json containing CLI and policy digests
 
 Options:
   --targets FILE             Target definitions (default: ${TARGETS_FILE})
@@ -103,12 +102,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-[[ $# -eq 2 ]] || { usage >&2; die "Provide old and new images.json files"; }
-OLD_IMAGES_FILE="$1"
-NEW_IMAGES_FILE="$2"
+[[ $# -eq 1 ]] || { usage >&2; die "Provide the candidate images.json file"; }
+CANDIDATE_IMAGES_FILE="$1"
 
-[[ -f "$OLD_IMAGES_FILE" ]] || die "Old images.json does not exist: ${OLD_IMAGES_FILE}"
-[[ -f "$NEW_IMAGES_FILE" ]] || die "New images.json does not exist: ${NEW_IMAGES_FILE}"
+[[ -f "$CANDIDATE_IMAGES_FILE" ]] || die "Candidate images.json does not exist: ${CANDIDATE_IMAGES_FILE}"
 [[ -f "$TARGETS_FILE" ]] || die "Target definitions do not exist: ${TARGETS_FILE}"
 [[ -f "$POLICY_TEMPLATE" ]] || die "Policy template does not exist: ${POLICY_TEMPLATE}"
 [[ -f "$PUBLIC_KEY_FILE" ]] || die "Public key does not exist: ${PUBLIC_KEY_FILE}"
@@ -117,12 +114,10 @@ for command in jq yq crane "$CONTAINER_ENGINE"; do
     command -v "$command" >/dev/null 2>&1 || die "Required command not found: ${command}"
 done
 
-for images_file in "$OLD_IMAGES_FILE" "$NEW_IMAGES_FILE"; do
-    if ! jq -e 'type == "object" and (.policy | type == "array") and (.components | type == "array")' \
-        "$images_file" >/dev/null 2>&1; then
-        die "Images.json is invalid or is missing policy/components arrays: ${images_file}"
-    fi
-done
+if ! jq -e 'type == "object" and (.policy | type == "array") and (.components | type == "array")' \
+    "$CANDIDATE_IMAGES_FILE" >/dev/null 2>&1; then
+    die "Candidate images.json is invalid or is missing policy/components arrays: ${CANDIDATE_IMAGES_FILE}"
+fi
 
 if ! jq -e '
     (.targets | type == "array" and length == 2) and
@@ -325,20 +320,20 @@ render_labels() {
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
 
-old_cli_ref=$(image_ref "$OLD_IMAGES_FILE" components quay.io/conforma/cli "old CLI")
-new_cli_ref=$(image_ref "$NEW_IMAGES_FILE" components quay.io/conforma/cli "new CLI")
-old_policy_ref=$(image_ref "$OLD_IMAGES_FILE" policy quay.io/conforma/release-policy "old release policy")
-new_policy_ref=$(image_ref "$NEW_IMAGES_FILE" policy quay.io/conforma/release-policy "new release policy")
+current_cli_ref="quay.io/conforma/cli:konflux"
+candidate_cli_ref=$(image_ref "$CANDIDATE_IMAGES_FILE" components quay.io/conforma/cli "candidate CLI")
+current_policy_ref="quay.io/conforma/release-policy:konflux"
+candidate_policy_ref=$(image_ref "$CANDIDATE_IMAGES_FILE" policy quay.io/conforma/release-policy "candidate release policy")
 policy_data=$(yq -o=json -I=0 '.spec.sources[0].data' "$POLICY_TEMPLATE")
 
 report_file="${WORK_DIR}/policy-behavior.md"
 {
     echo "## Policy Behavior Changes"
     echo
-    echo "- Old CLI: \`${old_cli_ref}\`"
-    echo "- New CLI: \`${new_cli_ref}\`"
-    echo "- Old policy: \`oci::${old_policy_ref}\`"
-    echo "- New policy: \`oci::${new_policy_ref}\`"
+    echo "- Current CLI: \`${current_cli_ref}\`"
+    echo "- Candidate CLI: \`${candidate_cli_ref}\`"
+    echo "- Current policy: \`oci::${current_policy_ref}\`"
+    echo "- Candidate policy: \`oci::${candidate_policy_ref}\`"
     echo "- Effective time: \`${EFFECTIVE_TIME}\`"
     echo "- Policy template: \`${POLICY_TEMPLATE#${REPO_ROOT}/}\`"
     echo "- Policy data: \`${policy_data}\`"
@@ -354,19 +349,19 @@ while IFS= read -r target_json; do
     target_ref="$(image_repository "$target_image")@${target_digest}"
 
     safe_name=$(printf '%s' "$target_name" | tr -cs '[:alnum:]_.-' '_')
-    old_report="${WORK_DIR}/${safe_name}-old.json"
-    new_report="${WORK_DIR}/${safe_name}-new.json"
-    old_normalized="${WORK_DIR}/${safe_name}-old-normalized.json"
-    new_normalized="${WORK_DIR}/${safe_name}-new-normalized.json"
+    current_report="${WORK_DIR}/${safe_name}-current.json"
+    candidate_report="${WORK_DIR}/${safe_name}-candidate.json"
+    current_normalized="${WORK_DIR}/${safe_name}-current-normalized.json"
+    candidate_normalized="${WORK_DIR}/${safe_name}-candidate-normalized.json"
 
-    run_validation "$display_name" "$target_ref" "$old_cli_ref" "$old_policy_ref" \
-        "$collection" "$old_report"
-    run_validation "$display_name" "$target_ref" "$new_cli_ref" "$new_policy_ref" \
-        "$collection" "$new_report"
+    run_validation "$display_name" "$target_ref" "$current_cli_ref" "$current_policy_ref" \
+        "$collection" "$current_report"
+    run_validation "$display_name" "$target_ref" "$candidate_cli_ref" "$candidate_policy_ref" \
+        "$collection" "$candidate_report"
 
-    normalize_report "$old_report" "$old_normalized"
-    normalize_report "$new_report" "$new_normalized"
-    changes=$(diff_results "$old_normalized" "$new_normalized")
+    normalize_report "$current_report" "$current_normalized"
+    normalize_report "$candidate_report" "$candidate_normalized"
+    changes=$(diff_results "$current_normalized" "$candidate_normalized")
 
     {
         echo "### ${display_name}"
