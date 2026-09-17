@@ -15,32 +15,32 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Updates the POLICY_BUNDLE_DIGEST default value in Tekton task definitions
-# to match the current digest of a policy bundle image.
+# Updates the POLICY_BUNDLE_DIGEST default value in Tekton pipeline/task
+# definitions to match the current digest of a policy bundle image.
 #
 # Usage:
-#   update-policy-digest.sh <tasks-dir> [<policy-image>]
+#   update-policy-digest.sh <search-dir> [<policy-image>]
 #
 # Arguments:
-#   tasks-dir     - Directory containing task YAML files (searched recursively)
+#   search-dir    - Directory to search recursively for YAML files containing POLICY_BUNDLE_DIGEST
 #   policy-image  - Policy bundle image reference (default: quay.io/conforma/release-policy:konflux)
 
 set -euo pipefail
 
-TASKS_DIR="${1:?Usage: update-policy-digest.sh <tasks-dir> [<policy-image>]}"
+SEARCH_DIR="${1:?Usage: update-policy-digest.sh <search-dir> [<policy-image>]}"
 POLICY_IMAGE="${2:-quay.io/conforma/release-policy:konflux}"
 
 NEW_DIGEST=$(crane digest "$POLICY_IMAGE")
 echo "Release policy digest: ${NEW_DIGEST}"
 
-TASK_FILES=$(grep -rl 'POLICY_BUNDLE_DIGEST' "$TASKS_DIR" || true)
-if [ -z "$TASK_FILES" ]; then
-    echo "ERROR: No task files contain POLICY_BUNDLE_DIGEST in ${TASKS_DIR}"
-    exit 1
+YAML_FILES=$(grep -rl 'POLICY_BUNDLE_DIGEST' "$SEARCH_DIR" || true)
+if [ -z "$YAML_FILES" ]; then
+    echo "No files contain POLICY_BUNDLE_DIGEST in ${SEARCH_DIR}, nothing to do."
+    exit 0
 fi
 
 UPDATED=0
-for f in $TASK_FILES; do
+for f in $YAML_FILES; do
     OLD_DIGEST=$(yq eval '.spec.params[] | select(.name == "POLICY_BUNDLE_DIGEST") | .default' "$f")
     if [ -z "$OLD_DIGEST" ] || [ "$OLD_DIGEST" = "null" ]; then
         echo "Warning: could not extract current digest from $f, skipping"

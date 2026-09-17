@@ -196,7 +196,12 @@ jobs:
         ./hack/extract-all-bundle-tasks.sh "$BUNDLE" /tmp/catalog-tasks
 
     - name: Update policy bundle digest in task definitions
-      run: ./hack/update-policy-digest.sh /tmp/catalog-tasks/tasks/
+      # Note: Since EC-2153, the POLICY_BUNDLE_DIGEST default moved from task
+      # definitions to the enterprise-contract pipeline in conforma/cli.
+      # Task definitions now have an empty default, so this step is a no-op.
+      # The pipeline digest is maintained via hack/update-policy-digest-in-tasks.sh
+      # in conforma/cli.
+      run: ./hack/update-policy-digest.sh /tmp/catalog-tasks/tasks/ || true
 
     - name: Upload task definitions
       uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
