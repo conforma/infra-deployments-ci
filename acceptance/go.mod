@@ -21,9 +21,9 @@ go 1.26.4
 require (
 	github.com/cucumber/godog v0.15.1
 	github.com/tektoncd/pipeline v1.16.0
-	k8s.io/api v0.35.8
-	k8s.io/apimachinery v0.36.4
-	k8s.io/client-go v0.35.8
+	k8s.io/api v0.35.9
+	k8s.io/apimachinery v0.36.5
+	k8s.io/client-go v0.35.9
 	sigs.k8s.io/kind v0.31.0
 	sigs.k8s.io/yaml v1.6.0
 )
