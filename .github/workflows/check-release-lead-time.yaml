@@ -26,6 +26,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
           go-version-file: hack/policy-rule-diff/go.mod
+          cache-dependency-path: hack/policy-rule-diff/go.mod
 
       - name: Detect lead-time code changes
         id: changes
