@@ -6,10 +6,6 @@ name: Check release policy lead time
     branches: [main]
     paths:
       - 'releases/**'
-      - 'hack/check-release-lead-time.sh'
-      - 'hack/check-release-lead-time_test.sh'
-      - 'hack/policy-rule-diff/**'
-      - '.github/workflows/check-release-lead-time.yaml'
 
 permissions:
   contents: read
@@ -28,40 +24,18 @@ jobs:
           go-version-file: hack/policy-rule-diff/go.mod
           cache-dependency-path: hack/policy-rule-diff/go.mod
 
-      - name: Detect lead-time code changes
-        id: changes
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euo pipefail
-          changed_files=$(git diff --name-only "$BASE_SHA" HEAD -- \
-            .github/workflows/check-release-lead-time.yaml \
-            hack/check-release-lead-time.sh \
-            hack/check-release-lead-time_test.sh \
-            hack/policy-rule-diff/)
-          if [[ -n "$changed_files" ]]; then
-            echo 'code_changed=true' >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Test rule diff
-        if: steps.changes.outputs.code_changed == 'true'
-        working-directory: hack/policy-rule-diff
-        run: go test ./...
-
-      - name: Test release CI helper
-        if: steps.changes.outputs.code_changed == 'true'
-        run: bash hack/check-release-lead-time_test.sh
-
       - name: Check submitted releases
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
-          mapfile -t release_dirs < <(
-            git diff --name-only --diff-filter=AM "$BASE_SHA" HEAD \
-              -- releases/ |
-              awk -F/ 'NF >= 3 { print $1 "/" $2 }' | sort -u
-          )
-          for release_dir in "${release_dirs[@]}"; do
+          release_dirs=$(git diff --name-only --diff-filter=AM \
+            "$BASE_SHA" HEAD -- releases/ |
+              awk -F/ 'NF >= 3 { print $1 "/" $2 }' | sort -u)
+          if [[ -z "$release_dirs" ]]; then
+            echo 'No submitted release directories found'
+            exit 0
+          fi
+          while IFS= read -r release_dir; do
             bash ./hack/check-release-lead-time.sh "$release_dir/images.json"
-          done
+          done <<< "$release_dirs"

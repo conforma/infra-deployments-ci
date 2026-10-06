@@ -1,0 +1,35 @@
+---
+name: Test release lead-time checker
+
+"on":
+  pull_request:
+    branches: [main]
+    paths:
+      - 'hack/check-release-lead-time.sh'
+      - 'hack/check-release-lead-time_test.sh'
+      - 'hack/policy-rule-diff/**'
+      - '.github/workflows/check-release-lead-time.yaml'
+      - '.github/workflows/test-release-lead-time.yaml'
+
+permissions:
+  contents: read
+
+jobs:
+  test-lead-time-code:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: hack/policy-rule-diff/go.mod
+          cache-dependency-path: hack/policy-rule-diff/go.mod
+
+      - name: Test rule diff
+        working-directory: hack/policy-rule-diff
+        run: go test ./...
+
+      - name: Test release CI helper
+        run: bash hack/check-release-lead-time_test.sh
