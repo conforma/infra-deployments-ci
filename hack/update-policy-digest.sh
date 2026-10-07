@@ -41,8 +41,13 @@ fi
 
 UPDATED=0
 for f in $TASK_FILES; do
+    PARAM_COUNT=$(yq eval '[.spec.params[]? | select(.name == "POLICY_BUNDLE_DIGEST")] | length' "$f")
+    if [ "$PARAM_COUNT" -eq 0 ]; then
+        echo "Warning: could not extract current digest from $f, skipping"
+        continue
+    fi
     OLD_DIGEST=$(yq eval '.spec.params[] | select(.name == "POLICY_BUNDLE_DIGEST") | .default' "$f")
-    if [ -z "$OLD_DIGEST" ] || [ "$OLD_DIGEST" = "null" ]; then
+    if [ "$OLD_DIGEST" = "null" ]; then
         echo "Warning: could not extract current digest from $f, skipping"
         continue
     fi

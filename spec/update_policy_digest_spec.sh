@@ -132,14 +132,23 @@ EOF
     End
   End
 
-  Describe "error cases"
-    It "fails when no arguments provided"
-      When run script "$SCRIPT"
-      The status should be failure
-      The stderr should include "Usage"
-    End
+  Describe "updates empty defaults"
+    setup_empty() {
+      create_task_yaml "${TMPDIR}/tasks/verify-ec/0.1" "verify-ec" ""
+    }
 
-    It "fails when no task files contain POLICY_BUNDLE_DIGEST"
+    Before "setup_empty"
+
+    It "sets the digest"
+      When run script "$SCRIPT" "${TMPDIR}/tasks"
+      The status should be success
+      The output should include "Updated 1 file(s)"
+      The contents of file "${TMPDIR}/tasks/verify-ec/0.1/verify-ec.yaml" should include "$MOCK_NEW_DIGEST"
+    End
+  End
+
+  Describe "no files contain POLICY_BUNDLE_DIGEST"
+    setup_empty_dir() {
       local dir="${TMPDIR}/tasks/no-digest/0.1"
       mkdir -p "$dir"
       cat > "${dir}/no-digest.yaml" <<'EOF'
@@ -152,9 +161,22 @@ spec:
   - name: SOME_OTHER_PARAM
     default: value
 EOF
+    }
+
+    Before "setup_empty_dir"
+
+    It "fails when no task files contain POLICY_BUNDLE_DIGEST"
       When run script "$SCRIPT" "${TMPDIR}/tasks"
       The status should be failure
       The output should include "No task files contain POLICY_BUNDLE_DIGEST"
+    End
+  End
+
+  Describe "error cases"
+    It "fails when no arguments provided"
+      When run script "$SCRIPT"
+      The status should be failure
+      The stderr should include "Usage"
     End
   End
 End
