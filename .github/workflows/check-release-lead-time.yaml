@@ -1,0 +1,41 @@
+---
+name: Check release policy lead time
+
+"on":
+  pull_request:
+    branches: [main]
+    paths:
+      - 'releases/**'
+
+permissions:
+  contents: read
+
+jobs:
+  check-lead-time:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: hack/policy-rule-diff/go.mod
+          cache-dependency-path: hack/policy-rule-diff/go.mod
+
+      - name: Check submitted releases
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          release_dirs=$(git diff --name-only --diff-filter=AM \
+            "$BASE_SHA" HEAD -- releases/ |
+              awk -F/ 'NF >= 3 { print $1 "/" $2 }' | sort -u)
+          if [[ -z "$release_dirs" ]]; then
+            echo 'No submitted release directories found'
+            exit 0
+          fi
+          while IFS= read -r release_dir; do
+            bash ./hack/check-release-lead-time.sh "$release_dir/images.json"
+          done <<< "$release_dirs"

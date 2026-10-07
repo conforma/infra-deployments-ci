@@ -94,7 +94,7 @@ func (r *rule) source() string {
 // ---------------------------------------------------------------------------
 
 var (
-	ruleHeadRE   = regexp.MustCompile(`^(deny|warn|allow)\s+(contains\s+\w+\s+if|if)\s*\{?\s*$`)
+	ruleHeadRE = regexp.MustCompile(`^(deny|warn|allow)\s+(contains\s+\w+\s+if|if)\s*\{?\s*$`)
 )
 
 // netBraceDepth returns the net change in brace depth for a single line,
@@ -421,6 +421,36 @@ type ruleChange struct {
 	file string // source file path
 }
 
+// validateEffectiveOn checks only newly added rules. Existing rules may have
+// older dates because they have already passed through a previous release.
+func validateEffectiveOn(added []ruleChange, minLeadDays int, now time.Time) error {
+	if minLeadDays == 0 {
+		return nil
+	}
+	minimum := now.Add(time.Duration(minLeadDays) * 24 * time.Hour)
+	var problems []string
+	for _, change := range added {
+		value := change.rule.effectiveOn
+		name := change.rule.key()
+		prefix := fmt.Sprintf("%s (%s)", name, change.file)
+		if value == "" {
+			problems = append(problems, fmt.Sprintf("%s: effective_on is missing", prefix))
+			continue
+		}
+		effectiveOn, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("%s: effective_on %q is not RFC3339", prefix, value))
+		} else if effectiveOn.Before(minimum) {
+			problems = append(problems, fmt.Sprintf("%s: effective_on %s is before %s", prefix, value, minimum.Format(time.RFC3339)))
+		}
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	sort.Strings(problems)
+	return fmt.Errorf("new rules require at least %d days of effective_on lead time (minimum %s):\n  %s", minLeadDays, minimum.Format(time.RFC3339), strings.Join(problems, "\n  "))
+}
+
 // summary returns a formatted block for a rule change with a colored bullet.
 func (c *ruleChange) summary(bullet, bulletColor string) string {
 	r := c.rule
@@ -651,7 +681,10 @@ func readFile(path string) string {
 // flag.Parse works correctly even when flags appear after positional args.
 func reorderArgs(args []string) []string {
 	// Flags that consume the next argument as their value.
-	stringFlags := map[string]bool{"before": true, "after": true}
+	stringFlags := map[string]bool{
+		"before": true, "after": true, "doc-base-url": true,
+		"min-effective-lead-days": true,
+	}
 
 	var flags, positional []string
 	i := 0
@@ -683,13 +716,12 @@ func reorderArgs(args []string) []string {
 type ociRef struct {
 	registry   string // e.g. "quay.io"
 	repository string // e.g. "conforma/release-policy"
-	tag        string // e.g. "latest" or "git-abc1234"
+	reference  string // e.g. "latest" or "sha256:<digest>"
 	original   string // original full string
 }
 
 func parseOCIRef(s string) (ociRef, error) {
-	// Expected form: registry/repo/path:tag
-	// e.g.  quay.io/conforma/release-policy:latest
+	// Expected form: registry/repo/path:tag or registry/repo/path@sha256:digest.
 	slashIdx := strings.Index(s, "/")
 	if slashIdx < 0 {
 		return ociRef{}, fmt.Errorf("invalid OCI reference %q: expected registry/repository:tag", s)
@@ -697,12 +729,18 @@ func parseOCIRef(s string) (ociRef, error) {
 	registry := s[:slashIdx]
 	rest := s[slashIdx+1:]
 
-	tag := "latest"
-	if colonIdx := strings.LastIndex(rest, ":"); colonIdx >= 0 {
-		tag = rest[colonIdx+1:]
+	reference := "latest"
+	if atIdx := strings.LastIndex(rest, "@"); atIdx >= 0 {
+		reference = rest[atIdx+1:]
+		rest = rest[:atIdx]
+	} else if colonIdx := strings.LastIndex(rest, ":"); colonIdx >= 0 {
+		reference = rest[colonIdx+1:]
 		rest = rest[:colonIdx]
 	}
-	return ociRef{registry: registry, repository: rest, tag: tag, original: s}, nil
+	if registry == "" || rest == "" || reference == "" {
+		return ociRef{}, fmt.Errorf("invalid OCI reference %q", s)
+	}
+	return ociRef{registry: registry, repository: rest, reference: reference, original: s}, nil
 }
 
 // ociClient handles the OCI Distribution Spec auth + request flow.
@@ -814,7 +852,7 @@ var ociManifestAccept = strings.Join([]string{
 }, ", ")
 
 func (c *ociClient) fetchManifest(ref ociRef) (ociManifest, error) {
-	u := fmt.Sprintf("https://%s/v2/%s/manifests/%s", ref.registry, ref.repository, ref.tag)
+	u := fmt.Sprintf("https://%s/v2/%s/manifests/%s", ref.registry, ref.repository, ref.reference)
 
 	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
@@ -954,6 +992,7 @@ func main() {
 	noColor := flag.Bool("no-color", false, "Disable color output")
 	jsonOut := flag.Bool("json", false, "Output structured JSON for LLM consumption")
 	docBase := flag.String("doc-base-url", "https://conforma.dev/docs/policy/packages", "Base URL for rule documentation links")
+	minLeadDays := flag.Int("min-effective-lead-days", 0, "Fail when an added rule's effective_on is less than this many days away (0 disables the check)")
 
 	flag.Usage = func() {
 		fmt.Fprintln(os.Stderr, `Usage: policy-rule-diff [flags] [refs...]
@@ -971,6 +1010,16 @@ Flags:`)
 	}
 	os.Args = append(os.Args[:1], reorderArgs(os.Args[1:])...)
 	flag.Parse()
+	if *minLeadDays < 0 {
+		fmt.Fprintln(os.Stderr, "error: -min-effective-lead-days must not be negative")
+		os.Exit(1)
+	}
+	validate := func(added []ruleChange) {
+		if err := validateEffectiveOn(added, *minLeadDays, time.Now().UTC()); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+	}
 
 	useColor = !*noColor && isTerminal()
 	docBaseURL = *docBase
@@ -985,6 +1034,7 @@ Flags:`)
 		ac := readFile(*after)
 		var added, removed []ruleChange
 		diffRules(&bc, &ac, *before, &added, &removed)
+		validate(added)
 		if *jsonOut {
 			filesBefore := map[string]string{*before: bc}
 			filesAfter := map[string]string{*after: ac}
@@ -1042,6 +1092,7 @@ Flags:`)
 			}
 			diffRules(bp, ap, p, &added, &removed)
 		}
+		validate(added)
 		if *jsonOut {
 			printChangesJSON(args[0], args[1], added, removed, beforeFiles, afterFiles)
 		} else {
@@ -1128,6 +1179,7 @@ Flags:`)
 
 		diffRules(beforePtr, afterPtr, relPath, &added, &removed)
 	}
+	validate(added)
 
 	if *jsonOut {
 		printChangesJSON(fromRef, toLabel, added, removed, filesBefore, filesAfter)

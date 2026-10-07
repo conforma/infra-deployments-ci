@@ -78,3 +78,14 @@ useful for detailed analysis but not needed for changelog summaries.
 | `-json` | Output structured JSON instead of colored terminal output |
 | `-before` / `-after` | Compare two local files directly |
 | `-no-color` | Disable colored terminal output |
+| `-min-effective-lead-days N` | Fail if an added rule has no valid RFC3339 `effective_on` at least N days away (default: disabled). The release pull request check uses 56 days. |
+
+The [release pull request workflow](../../.github/workflows/check-release-lead-time.yaml)
+runs when files under `releases/` change. It checks each policy image pinned in
+the submitted `releases/<date>/images.json` against its current `:konflux`
+image, and fails if any new rule has less than 56 days of lead time.
+Changelog generation does not run this validation.
+
+The [checker test workflow](../../.github/workflows/test-release-lead-time.yaml)
+runs when the lead-time implementation changes. It runs the rule-diff unit
+tests and a mocked release-helper test before the code is merged.
