@@ -13,6 +13,7 @@ permissions:
 
 jobs:
   create-infra-deployments-pr:
+    if: ${{ github.repository == 'conforma/infra-deployments-ci' }}
     runs-on: ubuntu-latest
 
     steps:
