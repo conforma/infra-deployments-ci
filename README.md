@@ -2,6 +2,9 @@
 
 Keep infra-deployments updated with the latest Enterprise Contract components.
 
+For the complete release process from changelog generation through image and
+Tekton task publication, see [the release workflow guide](docs/RELEASE_WORKFLOW.md).
+
 ## Generate a policy behavior changelog
 
 `hack/generate-changelog.sh` retains its existing release flow: it compares
