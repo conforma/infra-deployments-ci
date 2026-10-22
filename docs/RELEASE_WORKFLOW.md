@@ -192,7 +192,89 @@ For a full release, check the workflow run and Quay/catalog results:
 - The catalog `konflux` branch contains the prepared task definitions.
 - Keep the release PR, release directory, and workflow run URL as the release record.
 
-The workflow does not provide transactional rollback or a release-wide concurrency guard. A later job can fail after earlier image tags have moved. Inspect which jobs completed and the current destination tags before retrying selected jobs. A catalog failure does not undo a successfully published task bundle.
+The workflow does not provide transactional rollback or a release-wide concurrency guard. A later job can fail after earlier image tags have moved. Inspect which jobs completed and the current destination tags before retrying selected jobs. A catalog failure does not undo a successfully published task bundle. See the rollback procedure below before moving tags manually.
+
+## 9. Roll back to a previous release
+
+Rollback is a manual registry operation: find a previous release that was fully published, then move its image tags back to the recorded image digests. Do not dispatch `konflux-policy` with an old `release_dir` as a rollback. A dispatch reruns acceptance and resolves the current task bundle; it does not replay the old published artifacts.
+
+### Find the target release and its run
+
+Use the release directory and its associated successful workflow run together. A directory by itself does not prove that its images were promoted: a run can fail partway through, or a manual dispatch can skip publication jobs.
+
+1. Choose the previous release you want to restore, for example `releases/2026-09-10T17:30:44/`.
+2. List the workflow runs and identify the run whose log says it used that release directory:
+
+   ```bash
+   gh run list --repo conforma/infra-deployments-ci \
+     --workflow konflux-policy.yaml
+   RUN_ID='<run-id>' # Replace with the ID from the run list.
+   gh run view "$RUN_ID" --repo conforma/infra-deployments-ci --json conclusion,jobs,url
+   gh run view "$RUN_ID" --repo conforma/infra-deployments-ci --log
+   ```
+
+3. Confirm the selected run successfully completed the `tag` job. If restoring the task bundle, also confirm `update-task-definitions` and `tekton-task-bundle` succeeded. The log identifies the input file with a line such as `Using releases/<release>/images.json`.
+
+If a later run or manual dispatch has changed any of the tags since that release, use the most recent successful run that produced the version you intend to restore. Check the per-job results and dispatch options; a successful overall run is not enough if a publication job was skipped.
+
+### Recover the image references
+
+The previous release's `images.json` records the exact digests used by the `tag` job for the three policy images. Its `policy` entries also list the mirror repositories:
+
+```bash
+RELEASE_DIR='releases/<release-directory>'
+jq -r '.policy[] | "\(.image)@\(.digest) mirrors=\(.mirrors | join(", "))"' \
+  "$RELEASE_DIR/images.json"
+```
+
+For each policy entry, use its `image@digest` as the copy source for both the Conforma `:konflux` tag and every mirror `:konflux` tag. The workflow's `tag` job log confirms which copies completed.
+
+For the CLI, take the digest from that run's successful `tag` job, in the `Tag tested images by digest` step. The `components` entry for `quay.io/conforma/cli` in `images.json` is a generated candidate digest; the workflow promotes the CLI digest extracted from the tested task bundle, so confirm the run log before using the manifest value.
+
+For the task bundle, use the unique `run-<UTC-date>-<run-id>-<attempt>` tag printed by the successful `tekton-task-bundle` job. Check that the tag still exists in Quay and resolves to the expected digest before retagging. The `components` entry for `quay.io/conforma/tekton-task` records the bundle used as input to the workflow; the workflow rebuilds the bundle after updating task defaults, so that digest is not the published bundle digest.
+
+The release directory plus successful run logs therefore identify the promoted images as follows:
+
+| Image | Recovery source |
+|---|---|
+| Release, task, and build-task policy images | Previous release's `images.json` `policy` entries; check the successful run's `tag` logs. |
+| CLI | Successful run's `tag` job log, `Tag tested images by digest`. |
+| Rebuilt Tekton task bundle | Successful run's `tekton-task-bundle` log and its `run-...` tag. |
+
+### Move the tags and verify
+
+For policy images and mirrors, authenticate to the relevant Quay repositories and copy from the recorded digest, preserving all architectures:
+
+```bash
+IMAGE=quay.io/conforma/release-policy
+DIGEST='sha256:<digest-from-the-previous-release-images-json>'
+MIRROR=quay.io/enterprise-contract/ec-release-policy
+
+skopeo copy --all "docker://${IMAGE}@${DIGEST}" "docker://${IMAGE}:konflux"
+skopeo copy --all "docker://${IMAGE}@${DIGEST}" "docker://${MIRROR}:konflux"
+```
+
+Repeat for every policy entry and mirror in the selected release manifest. For the CLI, use the digest confirmed in the successful run log:
+
+```bash
+CLI_DIGEST='sha256:<digest-from-the-successful-tag-job-log>'
+skopeo copy --all "docker://quay.io/conforma/cli@${CLI_DIGEST}" \
+  docker://quay.io/conforma/cli:konflux
+```
+
+For the task bundle, move `:konflux` back to the run tag from the selected successful release:
+
+```bash
+BUNDLE_TAG='run-<UTC-date>-<run-id>-<attempt>' # Replace with the value from the workflow log.
+crane digest "quay.io/conforma/tekton-task:${BUNDLE_TAG}"
+crane tag "quay.io/conforma/tekton-task:${BUNDLE_TAG}" konflux
+```
+
+After retagging, run `crane digest` on each `:konflux` tag and mirror and compare the result with the selected release digest or the verified run log. Record the rollback operator, time, target release directory, and workflow run in the incident or change record. Rolling back the registry tags does not revert task definitions already pushed to the `tekton-catalog` `konflux` branch; that branch needs a separate change if task definitions must also be restored.
+
+### Retention limitation
+
+`images.json` is generated before publication. It records the policy digests and candidate component digests, but the workflow does not write its actual promoted CLI and rebuilt task-bundle digests back into the release directory. Run logs and the task bundle's `run-...` tag provide that information today, but those tags can later be removed by registry cleanup. For a rollback that can be performed from the previous release directory alone, the workflow would need to persist a post-publication record such as `published-images.json` containing every actual destination reference and digest, including the rebuilt task bundle.
 
 ## Separate infra-deployments update
 
