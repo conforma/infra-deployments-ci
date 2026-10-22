@@ -200,9 +200,16 @@ Rollback is a manual registry operation: find a previous release that was fully 
 
 ### Find the target release and its run
 
-Use the release directory and its associated successful workflow run together. A directory by itself does not prove that its images were promoted: a run can fail partway through, or a manual dispatch can skip publication jobs.
+Start with the previous release directory: its `images.json` is the source of the policy digests to restore, and it records candidate component digests. The associated workflow run is needed to confirm that publication actually completed and to recover the final rebuilt task-bundle tag and digest, which are not recorded in `images.json`.
 
-1. Choose the previous release you want to restore, for example `releases/2026-09-10T17:30:44/`.
+1. Choose the previous release you want to restore, for example `releases/2026-09-10T17:30:44/`, and inspect its manifest:
+
+   ```bash
+   RELEASE_DIR='releases/2026-09-10T17:30:44'
+   jq -r '.policy[] | "\(.image)@\(.digest)"' "$RELEASE_DIR/images.json"
+   jq -r '.components[] | "\(.image)@\(.digest)"' "$RELEASE_DIR/images.json"
+   ```
+
 2. List the workflow runs and identify the run whose log says it used that release directory:
 
    ```bash
@@ -213,13 +220,13 @@ Use the release directory and its associated successful workflow run together. A
    gh run view "$RUN_ID" --repo conforma/infra-deployments-ci --log
    ```
 
-3. Confirm the selected run successfully completed the `tag` job. If restoring the task bundle, also confirm `update-task-definitions` and `tekton-task-bundle` succeeded. The log identifies the input file with a line such as `Using releases/<release>/images.json`.
+3. Confirm the selected run successfully completed the `tag` job. This verifies the policy digests from `images.json` were promoted. If restoring the CLI, use the digest resolved from the tested task bundle in this run's logs; the manifest's CLI component digest is a candidate and is not the input used by the tag job. If restoring the task bundle, also confirm `update-task-definitions` and `tekton-task-bundle` succeeded, then use the run-specific bundle tag from its logs. The run log identifies the input file with a line such as `Using releases/<release>/images.json`.
 
 If a later run or manual dispatch has changed any of the tags since that release, use the most recent successful run that produced the version you intend to restore. Check the per-job results and dispatch options; a successful overall run is not enough if a publication job was skipped.
 
 ### Recover the image references
 
-The previous release's `images.json` records the exact digests used by the `tag` job for the three policy images. Its `policy` entries also list the mirror repositories:
+The previous release's `images.json` records the exact digests used by the `tag` job for the three policy images. Its `policy` entries also list the mirror repositories. You do not need the workflow run to discover these policy digests; use the run to verify the `tag` job completed and copied them:
 
 ```bash
 RELEASE_DIR='releases/<release-directory>'
