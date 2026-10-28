@@ -1,5 +1,5 @@
-Describe "extract-all-bundle-tasks.sh"
-  SCRIPT="./hack/extract-all-bundle-tasks.sh"
+Describe "extract-bundle-resources.sh"
+  SCRIPT="./hack/extract-bundle-resources.sh"
 
   setup() {
     setup_tmpdir
@@ -66,7 +66,7 @@ spec:
     Before "setup_bundle"
 
     It "creates catalog directory layout"
-      When run script "$SCRIPT" "quay.io/conforma/tekton-task:latest" "${TMPDIR}/output"
+      When run script "$SCRIPT" "quay.io/conforma/tekton-task:latest" "${TMPDIR}/output" task tasks
       The status should be success
       The output should include "Extracted 2 task(s)"
       The path "${TMPDIR}/output/tasks/verify-enterprise-contract/0.1/verify-enterprise-contract.yaml" should be file
@@ -74,7 +74,7 @@ spec:
     End
 
     It "writes valid YAML content"
-      When run script "$SCRIPT" "quay.io/conforma/tekton-task:latest" "${TMPDIR}/output"
+      When run script "$SCRIPT" "quay.io/conforma/tekton-task:latest" "${TMPDIR}/output" task tasks
       The status should be success
       The output should include "Extracted 2 task(s)"
       The contents of file "${TMPDIR}/output/tasks/verify-enterprise-contract/0.1/verify-enterprise-contract.yaml" should include "verify-enterprise-contract"
@@ -111,7 +111,7 @@ spec: {}
     Before "setup_digest_ref"
 
     It "strips digest from repo for blob fetch"
-      When run script "$SCRIPT" "quay.io/conforma/tekton-task@sha256:abc123" "${TMPDIR}/output"
+      When run script "$SCRIPT" "quay.io/conforma/tekton-task@sha256:abc123" "${TMPDIR}/output" task tasks
       The status should be success
       The output should include "Extracted 1 task(s)"
     End
@@ -144,7 +144,7 @@ spec: {}
   ]
 }
 EOF
-      When run script "$SCRIPT" "quay.io/conforma/tekton-task:latest" "${TMPDIR}/output"
+      When run script "$SCRIPT" "quay.io/conforma/tekton-task:latest" "${TMPDIR}/output" task tasks
       The status should be failure
       The output should include "No task layers found"
     End
@@ -171,9 +171,100 @@ metadata:
 spec: {}
 "
 
-      When run script "$SCRIPT" "quay.io/conforma/tekton-task:latest" "${TMPDIR}/output"
+      When run script "$SCRIPT" "quay.io/conforma/tekton-task:latest" "${TMPDIR}/output" task tasks
       The status should be failure
       The output should include "missing the app.kubernetes.io/version label"
+    End
+  End
+
+  Describe "StepActions"
+    It "writes StepActions to the requested directory"
+      cat > "${TMPDIR}/crane/manifest.json" <<'EOF'
+{
+  "layers": [
+    {
+      "digest": "sha256:stepaction",
+      "annotations": {
+        "dev.tekton.image.kind": "stepaction",
+        "dev.tekton.image.name": "create-test-result-attestation"
+      }
+    }
+  ]
+}
+EOF
+
+      create_blob "sha256:stepaction" "apiVersion: tekton.dev/v1
+kind: StepAction
+metadata:
+  name: create-test-result-attestation
+  labels:
+    app.kubernetes.io/version: \"0.1\"
+spec: {}
+"
+
+      When run script "$SCRIPT" "quay.io/conforma/step-actions:snapshot" "${TMPDIR}/output" stepaction stepactions
+      The status should be success
+      The output should include "Extracted 1 stepaction(s)"
+      The path "${TMPDIR}/output/stepactions/create-test-result-attestation/0.1/create-test-result-attestation.yaml" should be file
+    End
+
+    It "rejects a version that escapes the StepAction directory"
+      cat > "${TMPDIR}/crane/manifest.json" <<'EOF'
+{
+  "layers": [
+    {
+      "digest": "sha256:malicious-stepaction",
+      "annotations": {
+        "dev.tekton.image.kind": "stepaction",
+        "dev.tekton.image.name": "verify-enterprise-contract"
+      }
+    }
+  ]
+}
+EOF
+
+      create_blob "sha256:malicious-stepaction" "apiVersion: tekton.dev/v1
+kind: StepAction
+metadata:
+  name: verify-enterprise-contract
+  labels:
+    app.kubernetes.io/version: \"../../tasks/verify-enterprise-contract/0.1\"
+spec: {}
+"
+
+      When run script "$SCRIPT" "quay.io/conforma/step-actions:snapshot" "${TMPDIR}/output" stepaction stepactions
+      The status should be failure
+      The stderr should include "resolves outside"
+      The path "${TMPDIR}/output/tasks/verify-enterprise-contract/0.1/verify-enterprise-contract.yaml" should not be file
+    End
+
+    It "rejects a name that escapes the StepAction directory"
+      cat > "${TMPDIR}/crane/manifest.json" <<'EOF'
+{
+  "layers": [
+    {
+      "digest": "sha256:malicious-name",
+      "annotations": {
+        "dev.tekton.image.kind": "stepaction",
+        "dev.tekton.image.name": "../../tasks/verify-enterprise-contract"
+      }
+    }
+  ]
+}
+EOF
+
+      create_blob "sha256:malicious-name" "apiVersion: tekton.dev/v1
+kind: StepAction
+metadata:
+  name: verify-enterprise-contract
+  labels:
+    app.kubernetes.io/version: \"0.1\"
+spec: {}
+"
+
+      When run script "$SCRIPT" "quay.io/conforma/step-actions:snapshot" "${TMPDIR}/output" stepaction stepactions
+      The status should be failure
+      The stderr should include "resolves outside"
     End
   End
 End
