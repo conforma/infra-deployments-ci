@@ -2,8 +2,9 @@
 
 Advance the three policy bundles to the sources at
 [`conforma/policy` main, `c584f00711d7760c46171bc833b41e8fe8177ea0`](https://github.com/conforma/policy/commit/c584f00711d7760c46171bc833b41e8fe8177ea0).
-The manifest records the released CLI and task-bundle digests captured on
-2026-10-29. This proposal changes release files only and remains blocked.
+Retain the released CLI and input task bundle captured on 2026-10-29 through
+explicit input pins. This is a controlled exception, not a new release mode.
+Workflow YAML is unchanged; full release validation remains outstanding.
 
 ## Images
 
@@ -12,14 +13,24 @@ The manifest records the released CLI and task-bundle digests captured on
 | `quay.io/conforma/release-policy` | `sha256:c5f849046794ca55c52f5d84b88e53858b299b759fa8a4827f6911dead422315` | Promote policy and configured mirror |
 | `quay.io/conforma/task-policy` | `sha256:4785d7b7346ff5ec00736e85166b4d36ee726040dce8827051b35b71367de946` | Promote policy and configured mirror |
 | `quay.io/conforma/build-task-policy` | `sha256:c74f8a90e75ec19c32d2d860b2c5c70f0c759ce5c86665b9f9f9c38f2606f0fe` | Promote policy and configured mirror |
-| `quay.io/conforma/cli` | `sha256:6c6343486b739836c448277c00b1ec3c291e4ad10fd2b1767ff3984e89a43ad1` | Recorded released component |
-| `quay.io/conforma/tekton-task` | `sha256:e2ac3444a229ce1688c96692ba2af166656be9313ac5cba750cac1c7daf3371d` | Recorded released component |
+| `quay.io/conforma/cli` | `sha256:6c6343486b739836c448277c00b1ec3c291e4ad10fd2b1767ff3984e89a43ad1` | Retain the CLI selected from the pinned bundle |
+| `quay.io/conforma/tekton-task` | `sha256:e2ac3444a229ce1688c96692ba2af166656be9313ac5cba750cac1c7daf3371d` | Retained input bundle, not the future rebuilt output |
 
-The unchanged workflow selects the task bundle and CLI from
-`tekton-task:latest`, independently of the manifest's `components` entries.
-Merging this release directory would run that workflow and could change the
-CLI. These pins do not make automated publication policy-only. Do not merge
-until the publication scope is resolved without changing the current CI.
+Both acceptance pipelines and both feature files pin the retained task bundle.
+The resolver handles digest-pinned references without corrupting them. The
+existing workflow therefore selects and retags the captured CLI digest, rather
+than the CLI from `tekton-task:latest`. All four scenarios pin the candidate
+release policy; task policy parameters match the intended new bundle default.
+
+This one-off change favors a small diff over new drift/concurrency guards or
+automatic pin management. Recheck the released CLI/task tags before promotion
+and do not overlap releases: existing tag writes can overwrite a newer release,
+and task preparation still reads `release-policy:konflux`. Before the next
+normal release, restore or update the bundle pins, feature policy sources, and
+explicit task policy parameters together. The existing step-actions snapshot,
+policy data, and Golden image references remain mutable; this is not a full
+artifact freeze. Acceptance still uses `STRICT=false`, so review policy behavior
+results rather than treating a successful pipeline as proof of zero violations.
 
 The policy revision annotations are `1b908855` for release-policy and `cb839dc5`
 for task-policy and build-task-policy. These match the last commits affecting
@@ -64,9 +75,11 @@ bundles. These are rule-metadata changes, not a runtime behavior comparison.
 
 ## Validation and merge blockers
 
-JSON validation and a diff-scope check passed. Only this changelog and
-`images.json` differ from the PR base; the workflows, scripts, tests, and release
-documentation are unchanged.
+A focused local check ran the real resolver and confirmed the retained CLI and
+bundle, then checked both pipeline files and all four scenario policy sources
+against the manifest. Bash syntax, existing helper/Go tests, and whitespace
+checks passed. Workflow YAML and existing test infrastructure remain unchanged.
+These input checks are not a container-based compatibility test.
 
 `hack/check-release-lead-time.sh` fails because `valid_cdx_1_7` has no
 `effective_on` date. The minimum at the check was `2026-12-24T09:57:57Z`.
