@@ -1,5 +1,4 @@
 {
-  "policy_only": true,
   "policy": [
     {
       "image": "quay.io/conforma/release-policy",

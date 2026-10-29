@@ -66,7 +66,6 @@ jobs:
           echo "ERROR: No images.json found" >&2
           exit 1
         fi
-        jq -e '(.policy_only // false) | type == "boolean"' "$IMAGES_FILE" > /dev/null
         echo "Using ${IMAGES_FILE}" >&2
         echo "images=$(jq -c . "$IMAGES_FILE")" >> "$GITHUB_OUTPUT"
 
@@ -88,43 +87,10 @@ jobs:
 
     - name: Resolve tested image digests
       id: resolve-digests
-      env:
-        RELEASE_IMAGES: ${{ steps.release-images.outputs.images }}
       run: |
         set -euo pipefail
-        if jq -e '.policy_only == true' <<< "$RELEASE_IMAGES" > /dev/null; then
-          printf '%s\n' "$RELEASE_IMAGES" > "$RUNNER_TEMP/release-images.json"
-          DIGESTS=$(./hack/resolve-tested-digests.sh "$RUNNER_TEMP/release-images.json" | jq -c .)
-        else
-          DIGESTS=$(./hack/resolve-tested-digests.sh | jq -c .)
-        fi
+        DIGESTS=$(./hack/resolve-tested-digests.sh | jq -c .)
         echo "bundle-digests=${DIGESTS}" >> "$GITHUB_OUTPUT"
-
-    - name: Pin policy-only acceptance inputs
-      if: ${{ fromJSON(steps.release-images.outputs.images).policy_only == true }}
-      env:
-        RELEASE_IMAGES: ${{ steps.release-images.outputs.images }}
-        BUNDLE_DIGESTS: ${{ steps.resolve-digests.outputs.bundle-digests }}
-      run: |
-        set -euo pipefail
-        BUNDLE=$(jq -er 'to_entries[] | select(.key | test("tekton-task")) | .value' <<< "$BUNDLE_DIGESTS")
-        POLICY_DIGEST=$(jq -er '
-          [.policy[] | select(.image == "quay.io/conforma/release-policy")] |
-          if length == 1 then .[0].digest else error("Expected one release policy") end |
-          select(type == "string" and test("^sha256:[0-9a-fA-F]{64}$"))' <<< "$RELEASE_IMAGES")
-        export BUNDLE POLICY_DIGEST
-        for pipeline in acceptance/conforma*.yaml; do
-          yq -i '
-            (.spec.tasks[] | select(.taskRef.resolver == "bundles") |
-              .taskRef.params[] | select(.name == "bundle") | .value) = strenv(BUNDLE) |
-            (.spec.tasks[] | select(.taskRef.resolver == "bundles") | .params) +=
-              [{"name": "POLICY_BUNDLE_DIGEST", "value": strenv(POLICY_DIGEST)}]
-          ' "$pipeline"
-        done
-        sed -i \
-          -e "s|quay.io/conforma/tekton-task:latest|${BUNDLE}|g" \
-          -e "s|quay.io/conforma/release-policy:latest|quay.io/conforma/release-policy@${POLICY_DIGEST}|g" \
-          features/validate_golden*.feature
 
     - name: Run acceptance tests
       run: make acceptance
@@ -174,7 +140,6 @@ jobs:
           done
 
     - name: Tag tested images by digest
-      if: ${{ fromJSON(needs.acceptance-tests.outputs.release-images).policy_only != true }}
       env:
         BUNDLE_DIGESTS: ${{ needs.acceptance-tests.outputs.bundle-digests }}
       run: |
@@ -231,37 +196,14 @@ jobs:
         ./hack/extract-bundle-resources.sh "$BUNDLE" /tmp/catalog-tasks task tasks
 
     - name: Update policy bundle digest in task definitions
-      env:
-        RELEASE_IMAGES: ${{ needs.acceptance-tests.outputs.release-images }}
-      run: |
-        set -euo pipefail
-        POLICY="quay.io/conforma/release-policy:konflux"
-        if jq -e '.policy_only == true' <<< "$RELEASE_IMAGES" > /dev/null; then
-          POLICY=$(jq -er '.policy[] | select(.image == "quay.io/conforma/release-policy") |
-            "\(.image)@\(.digest)"' <<< "$RELEASE_IMAGES")
-        fi
-        ./hack/update-policy-digest.sh /tmp/catalog-tasks/tasks/ "$POLICY"
+      run: ./hack/update-policy-digest.sh /tmp/catalog-tasks/tasks/
 
-    - name: Extract step actions from selected bundle
-      env:
-        RELEASE_IMAGES: ${{ needs.acceptance-tests.outputs.release-images }}
-        BUNDLE_DIGESTS: ${{ needs.acceptance-tests.outputs.bundle-digests }}
+    - name: Extract step actions from published bundle
       run: |
         set -euo pipefail
-        if jq -e '.policy_only == true' <<< "$RELEASE_IMAGES" > /dev/null; then
-          BUNDLE=$(jq -er 'to_entries[] | select(.key | test("tekton-task")) | .value' <<< "$BUNDLE_DIGESTS")
-          MANIFEST=$(crane manifest "$BUNDLE")
-          COUNT=$(jq '[.layers[] | select(.annotations["dev.tekton.image.kind"] == "stepaction")] | length' <<< "$MANIFEST")
-          if [[ "$COUNT" -eq 0 ]]; then
-            echo "No step actions in retained task bundle"
-            exit 0
-          fi
-        else
-          BUNDLE="quay.io/conforma/step-actions"
-          DIGEST=$(crane digest "${BUNDLE}:snapshot")
-          BUNDLE="${BUNDLE}@${DIGEST}"
-        fi
-        ./hack/extract-bundle-resources.sh "$BUNDLE" /tmp/catalog-tasks stepaction stepactions
+        BUNDLE="quay.io/conforma/step-actions"
+        DIGEST=$(crane digest "${BUNDLE}:snapshot")
+        ./hack/extract-bundle-resources.sh "${BUNDLE}@${DIGEST}" /tmp/catalog-tasks stepaction stepactions
 
     - name: Upload task definitions
       uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -366,12 +308,10 @@ jobs:
         cd tekton-catalog
 
         cp -r /tmp/catalog-tasks/tasks/* tasks/
-        git add tasks/
-        if [[ -d /tmp/catalog-tasks/stepactions ]]; then
-          mkdir -p stepactions
-          cp -r /tmp/catalog-tasks/stepactions/* stepactions/
-          git add stepactions/
-        fi
+        mkdir -p stepactions
+        cp -r /tmp/catalog-tasks/stepactions/* stepactions/
+
+        git add tasks/ stepactions/
 
         if git diff --cached --quiet; then
           echo "No changes to task or step-action definitions"

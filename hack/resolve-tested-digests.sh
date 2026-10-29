@@ -18,11 +18,9 @@
 # Resolves each unique bundle URL and CLI image referenced in acceptance
 # pipeline definitions to their current digests. Outputs a JSON object mapping
 # image URL to pinned "repo@digest" for use in downstream CI jobs.
-# With a release manifest, use its pinned task bundle instead and require all
-# Conforma CLI references in that bundle to match the manifest's CLI component.
 #
 # Usage:
-#   resolve-tested-digests.sh [images.json]
+#   resolve-tested-digests.sh
 #
 # Output (JSON):
 #   {
@@ -35,38 +33,19 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-EXPECTED_CLI=""
-if [[ $# -gt 0 ]]; then
-    IMAGES_FILE="$1"
-    component_ref() {
-        local image="$1" digest
-        digest=$(jq -er --arg image "$image" '
-            [.components[] | select(.image == $image)] |
-            if length == 1 then .[0].digest else error("Expected one component: " + $image) end |
-            select(type == "string" and test("^sha256:[0-9a-fA-F]{64}$"))
-        ' "$IMAGES_FILE") || {
-            echo "ERROR: Missing, duplicate, or invalid component: $image" >&2
-            return 1
-        }
-        printf '%s@%s\n' "$image" "$digest"
-    }
-    BUNDLE_URLS=$(component_ref quay.io/conforma/tekton-task)
-    EXPECTED_CLI=$(component_ref quay.io/conforma/cli)
-else
-    # Get unique bundle URLs from acceptance pipeline definitions.
-    BUNDLE_URLS=$(
-        for pipeline_file in "${REPO_ROOT}"/acceptance/conforma*.yaml; do
-            [ -f "$pipeline_file" ] || continue
-            yq eval '
-                .spec.tasks[] |
-                select(.taskRef.resolver == "bundles") |
-                .taskRef.params[] |
-                select(.name == "bundle") |
-                .value
-            ' "$pipeline_file"
-        done | sort -u
-    )
-fi
+# Get unique bundle URLs from acceptance pipeline definitions
+BUNDLE_URLS=$(
+    for pipeline_file in "${REPO_ROOT}"/acceptance/conforma*.yaml; do
+        [ -f "$pipeline_file" ] || continue
+        yq eval '
+            .spec.tasks[] |
+            select(.taskRef.resolver == "bundles") |
+            .taskRef.params[] |
+            select(.name == "bundle") |
+            .value
+        ' "$pipeline_file"
+    done | sort -u
+)
 
 if [ -z "$BUNDLE_URLS" ]; then
     echo "ERROR: No bundle URLs found in acceptance pipeline files" >&2
@@ -78,8 +57,7 @@ RESULT="{}"
 FIRST_PINNED=""
 for url in $BUNDLE_URLS; do
     digest=$(crane digest "$url")
-    repo="${url%@*}"
-    pinned="${repo%:*}@${digest}"
+    pinned="${url%:*}@${digest}"
     RESULT=$(echo "$RESULT" | jq --arg url "$url" --arg pinned "$pinned" '. + {($url): $pinned}')
     echo "Resolved ${url} → ${pinned}" >&2
     [ -z "$FIRST_PINNED" ] && FIRST_PINNED="$pinned"
@@ -114,29 +92,6 @@ if [[ "$CLI_IMAGE" == *@sha256:* ]]; then
 else
     cli_digest=$(crane digest "$CLI_IMAGE")
     CLI_PINNED="${CLI_IMAGE%:*}@${cli_digest}"
-fi
-
-if [[ -n "$EXPECTED_CLI" ]]; then
-    if [[ "$CLI_PINNED" != "$EXPECTED_CLI" ]]; then
-        echo "ERROR: Bundle CLI $CLI_PINNED does not match $EXPECTED_CLI" >&2
-        exit 1
-    fi
-    # Check sibling tasks and preserved step actions, not just the first step.
-    LAYERS=$(echo "$MANIFEST" | jq -r '.layers[] |
-        select(.annotations["dev.tekton.image.kind"] == "task" or
-               .annotations["dev.tekton.image.kind"] == "stepaction") | .digest')
-    while IFS= read -r layer; do
-        IMAGES=$(crane blob "${REPO}@${layer}" | gunzip | tar -xO | yq -r '
-            [.spec.steps[]?.image, .spec.stepTemplate.image, .spec.image] | .[] |
-            select(. != null) | select(test("^quay[.]io/conforma/cli([:@]|$)"))' -)
-        while IFS= read -r image; do
-            [[ -z "$image" ]] && continue
-            if [[ "$image" != "$EXPECTED_CLI" ]]; then
-                echo "ERROR: Bundle contains CLI $image instead of $EXPECTED_CLI" >&2
-                exit 1
-            fi
-        done <<< "$IMAGES"
-    done <<< "$LAYERS"
 fi
 
 CLI_REPO="${CLI_PINNED%@*}"

@@ -1,9 +1,9 @@
-# Draft: policy-only Konflux release
+# Draft: Konflux policy update
 
 Advance the three policy bundles to the sources at
-[`conforma/policy` main, `c584f00711d7760c46171bc833b41e8fe8177ea0`](https://github.com/conforma/policy/commit/c584f00711d7760c46171bc833b41e8fe8177ea0),
-while retaining the released CLI and task definitions captured on 2026-10-29.
-This proposal is blocked and must not be merged yet.
+[`conforma/policy` main, `c584f00711d7760c46171bc833b41e8fe8177ea0`](https://github.com/conforma/policy/commit/c584f00711d7760c46171bc833b41e8fe8177ea0).
+The manifest records the released CLI and task-bundle digests captured on
+2026-10-29. This proposal changes release files only and remains blocked.
 
 ## Images
 
@@ -12,13 +12,14 @@ This proposal is blocked and must not be merged yet.
 | `quay.io/conforma/release-policy` | `sha256:c5f849046794ca55c52f5d84b88e53858b299b759fa8a4827f6911dead422315` | Promote policy and configured mirror |
 | `quay.io/conforma/task-policy` | `sha256:4785d7b7346ff5ec00736e85166b4d36ee726040dce8827051b35b71367de946` | Promote policy and configured mirror |
 | `quay.io/conforma/build-task-policy` | `sha256:c74f8a90e75ec19c32d2d860b2c5c70f0c759ce5c86665b9f9f9c38f2606f0fe` | Promote policy and configured mirror |
-| `quay.io/conforma/cli` | `sha256:6c6343486b739836c448277c00b1ec3c291e4ad10fd2b1767ff3984e89a43ad1` | Retain; do not retag |
-| `quay.io/conforma/tekton-task` | `sha256:e2ac3444a229ce1688c96692ba2af166656be9313ac5cba750cac1c7daf3371d` | Retained input bundle, not the future rebuilt output |
+| `quay.io/conforma/cli` | `sha256:6c6343486b739836c448277c00b1ec3c291e4ad10fd2b1767ff3984e89a43ad1` | Recorded released component |
+| `quay.io/conforma/tekton-task` | `sha256:e2ac3444a229ce1688c96692ba2af166656be9313ac5cba750cac1c7daf3371d` | Recorded released component |
 
-The `policy_only` flag makes the workflow use these component pins rather than
-`tekton-task:latest`. All CLI references in the three retained tasks match the
-selected CLI digest. Task preparation changes only the two validation tasks'
-`POLICY_BUNDLE_DIGEST` defaults. It does not import newer step actions.
+The unchanged workflow selects the task bundle and CLI from
+`tekton-task:latest`, independently of the manifest's `components` entries.
+Merging this release directory would run that workflow and could change the
+CLI. These pins do not make automated publication policy-only. Do not merge
+until the publication scope is resolved without changing the current CI.
 
 The policy revision annotations are `1b908855` for release-policy and `cb839dc5`
 for task-policy and build-task-policy. These match the last commits affecting
@@ -41,7 +42,7 @@ Selected policy changes in that range:
 - [#1826](https://github.com/conforma/policy/pull/1826): Allow the PNC SLSA build type for PipelineRun attestations.
 - [#1844](https://github.com/conforma/policy/pull/1844): Use the `ec.oci.parsed_blob` builtin.
 
-There are no CLI image changes. Compatibility with the retained CLI still needs
+No CLI update is requested. Compatibility with the released CLI still needs
 validation, including policy use of custom builtins.
 
 ## Policy rule changes
@@ -63,10 +64,9 @@ bundles. These are rule-metadata changes, not a runtime behavior comparison.
 
 ## Validation and merge blockers
 
-The pinned-input regression test, existing release-helper test, Go rule-diff
-tests, Bash syntax checks, and actionlint passed. Resolving the real retained
-bundle reproduced the selected CLI digest. A semantic comparison of the
-prepared tasks confirmed that only the two policy defaults changed.
+JSON validation and a diff-scope check passed. Only this changelog and
+`images.json` differ from the PR base; the workflows, scripts, tests, and release
+documentation are unchanged.
 
 `hack/check-release-lead-time.sh` fails because `valid_cdx_1_7` has no
 `effective_on` date. The minimum at the check was `2026-12-24T09:57:57Z`.
@@ -77,5 +77,4 @@ candidate digests and rerun the check; this proposal does not waive it.
 The container-based Golden image behavior comparison and Kind acceptance suite
 have not run because the preparation environment has no Docker daemon. Run both
 against the retained CLI and candidate policy before treating this as a release
-candidate. The workflow changes pin policy-only acceptance inputs, but that is
-not evidence of a successful acceptance run.
+candidate. Compatibility with the released CLI has not been demonstrated.

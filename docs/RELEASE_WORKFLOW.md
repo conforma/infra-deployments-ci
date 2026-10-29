@@ -114,34 +114,6 @@ bash ./hack/check-release-lead-time.sh releases/<release-directory>/images.json
 
 The generator does not run this check. The publication workflow does not repeat it. GitHub branch protection determines whether the check must pass before merge; the workflow definition alone does not establish that requirement. [`CODEOWNERS`](../.github/CODEOWNERS) assigns repository paths to `@conforma/devs`, but approval requirements are set separately.
 
-### Policy-only releases
-
-To update policies without releasing a different CLI, set the top-level
-`policy_only` field in `images.json` to `true`. Pin the intended policy images in
-`policy`, and put the currently released CLI and Tekton task-bundle digests in
-`components`. Both component entries are required. The generator still selects
-`:latest` components, so replace those entries and rerun the behavior comparison
-with the edited manifest; do not reuse a report produced with a different CLI.
-
-In this mode, the workflow:
-
-- Reads the pinned task bundle from the manifest and rejects CLI references in
-  its tasks or step actions that differ from the manifest's CLI digest.
-- Pins acceptance pipeline and feature inputs to that bundle and the candidate
-  release policy, including the `POLICY_BUNDLE_DIGEST` task parameter.
-- Promotes policy tags and mirrors, but skips CLI retagging.
-- Reuses the retained task definitions, changes their policy default to the
-  manifest's release-policy digest, and preserves any step actions already in
-  that bundle. It does not import the current step-actions snapshot.
-
-Task-bundle and catalog publication still run unless disabled by manual dispatch.
-The bundle is rebuilt to carry the new policy default; its CLI references stay
-unchanged. Policy-only task preparation uses the manifest's policy digest even
-when `run_tag` is false. The lead-time and compatibility checks still apply.
-
-The remaining sections describe the default full-release behavior unless noted.
-Omitting `policy_only`, or setting it to `false`, keeps that behavior unchanged.
-
 ## 4. Merge and start publication
 
 The [`konflux-policy` workflow](../.github/workflows/konflux-policy.yaml) starts on either:
@@ -175,13 +147,13 @@ The resolver scans `acceptance/conforma*.yaml` for Tekton bundle references. It 
 
 The acceptance suite creates a temporary Kind cluster with Tekton Pipelines, the EnterpriseContractPolicy CRD, and a local OCI registry. Four scenarios validate Golden container and Golden RPM inputs through both `verify-enterprise-contract` and `verify-conforma-konflux-ta`. The Trusted Artifacts scenarios prepare the input snapshot and publish it to the local registry. The tests check that the Tekton pipelines complete successfully with `STRICT=false`; they do not require that policy reports contain zero violations.
 
-**Normal-release digest limitation:** the default mode captures bundle and CLI digests, but its acceptance scenarios still refer to `quay.io/conforma/tekton-task:latest` and `quay.io/conforma/release-policy:latest`. The captured digest map is used for downstream promotion and task extraction, but it is not passed into those test scenarios. Therefore, successful acceptance tests do not prove that the exact candidate digests in the reviewed release manifest were tested. The acceptance policy data sources also differ from the local behavior comparison: scenarios use `git::github.com/release-engineering/rhtap-ec-policy//data` and `oci::quay.io/konflux-ci/tekton-catalog/data-acceptable-bundles:latest`.
+**Digest limitation:** although the resolver captures bundle and CLI digests, the acceptance scenarios still refer to `quay.io/conforma/tekton-task:latest` and `quay.io/conforma/release-policy:latest`. The captured digest map is used for downstream promotion and task extraction, but it is not passed into those test scenarios. Therefore, successful acceptance tests do not prove that the exact candidate digests in the reviewed release manifest were tested. The acceptance policy data sources also differ from the local behavior comparison: scenarios use `git::github.com/release-engineering/rhtap-ec-policy//data` and `oci::quay.io/konflux-ci/tekton-catalog/data-acceptable-bundles:latest`.
 
 ## 6. Promote policy and CLI images
 
 After acceptance succeeds, the `tag` job logs in to `quay.io/conforma` and `quay.io/enterprise-contract` using repository secrets. It uses `skopeo copy --all` to copy each policy digest in the release manifest to that image's Conforma `:konflux` tag and to any configured mirror `:konflux` tags.
 
-For a full release, the same job promotes the CLI image digest extracted from the tested task bundle to the CLI repository's `:konflux` tag. It excludes the task bundle from this direct retagging. The `components` entries in `images.json` select the retained CLI and task bundle only when `policy_only` is true; otherwise they are not used for promotion.
+The same job promotes the CLI image digest extracted from the tested task bundle to the CLI repository's `:konflux` tag. It excludes the task bundle from this direct retagging. The `components` entries in `images.json` are not used to choose the CLI or task bundle promoted by this workflow.
 
 ## 7. Rebuild and publish task definitions
 

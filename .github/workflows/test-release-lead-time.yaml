@@ -8,9 +8,6 @@ name: Test release lead-time checker
       - 'hack/check-release-lead-time.sh'
       - 'hack/check-release-lead-time_test.sh'
       - 'hack/policy-rule-diff/**'
-      - 'hack/resolve-tested-digests.sh'
-      - 'hack/resolve-tested-digests_test.sh'
-      - '.github/workflows/konflux-policy.yaml'
       - '.github/workflows/check-release-lead-time.yaml'
       - '.github/workflows/test-release-lead-time.yaml'
 
@@ -36,9 +33,3 @@ jobs:
 
       - name: Test release CI helper
         run: bash hack/check-release-lead-time_test.sh
-
-      - name: Install yq
-        uses: mikefarah/yq@504fc38780cc46be8444ea1b72fb55919fc0bfb0 # v4.54.1
-
-      - name: Test pinned release inputs
-        run: bash hack/resolve-tested-digests_test.sh
