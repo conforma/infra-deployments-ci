@@ -16,11 +16,11 @@
 
 module github.com/conforma/infra-deployments-ci/acceptance
 
-go 1.27.0
+go 1.27.3
 
 require (
 	github.com/cucumber/godog v0.16.0
-	github.com/tektoncd/pipeline v1.17.0
+	github.com/tektoncd/pipeline v1.17.1
 	k8s.io/api v0.37.1
 	k8s.io/apimachinery v0.37.1
 	k8s.io/client-go v0.37.1
