@@ -114,7 +114,7 @@ spec:
         resolver: bundles
         params:
           - name: bundle
-            value: quay.io/conforma/tekton-task:latest
+            value: quay.io/conforma/tekton-task@sha256:e2ac3444a229ce1688c96692ba2af166656be9313ac5cba750cac1c7daf3371d
           - name: name
             value: verify-enterprise-contract
           - name: kind

@@ -57,7 +57,12 @@ RESULT="{}"
 FIRST_PINNED=""
 for url in $BUNDLE_URLS; do
     digest=$(crane digest "$url")
-    pinned="${url%:*}@${digest}"
+    if [[ "$url" == *@sha256:* ]]; then
+        # Already digest-pinned; keep the reference as-is
+        pinned="$url"
+    else
+        pinned="${url%:*}@${digest}"
+    fi
     RESULT=$(echo "$RESULT" | jq --arg url "$url" --arg pinned "$pinned" '. + {($url): $pinned}')
     echo "Resolved ${url} → ${pinned}" >&2
     [ -z "$FIRST_PINNED" ] && FIRST_PINNED="$pinned"
