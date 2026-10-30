@@ -30,7 +30,11 @@ set -euo pipefail
 TASKS_DIR="${1:?Usage: update-policy-digest.sh <tasks-dir> [<policy-image>]}"
 POLICY_IMAGE="${2:-quay.io/conforma/release-policy:konflux}"
 
-NEW_DIGEST=$(crane digest "$POLICY_IMAGE")
+if [[ "$POLICY_IMAGE" == *@sha256:* ]]; then
+    NEW_DIGEST="${POLICY_IMAGE##*@}"
+else
+    NEW_DIGEST=$(crane digest "$POLICY_IMAGE")
+fi
 echo "Release policy digest: ${NEW_DIGEST}"
 
 TASK_FILES=$(grep -rl 'POLICY_BUNDLE_DIGEST' "$TASKS_DIR" || true)

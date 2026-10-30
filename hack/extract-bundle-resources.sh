@@ -22,7 +22,7 @@ OUTPUT_DIR="${2:?Usage: extract-bundle-resources.sh <bundle-ref> <output-dir> <k
 KIND="${3:?Usage: extract-bundle-resources.sh <bundle-ref> <output-dir> <kind> <directory>}"
 DIRECTORY="${4:?Usage: extract-bundle-resources.sh <bundle-ref> <output-dir> <kind> <directory>}"
 REPO="${BUNDLE%@*}"
-REPO="${REPO%:*}"
+[[ "${REPO##*/}" != *:* ]] || REPO="${REPO%:*}"
 RESOURCE_DIR=$(realpath -m "${OUTPUT_DIR}/${DIRECTORY}")
 
 MANIFEST=$(crane manifest "$BUNDLE")
@@ -34,14 +34,16 @@ if [ -z "$LAYERS" ]; then
     exit 1
 fi
 
+RESOURCE_FILE=$(mktemp)
+trap 'rm -f "$RESOURCE_FILE"' EXIT
 COUNT=0
 while IFS= read -r layer; do
     [ -z "$layer" ] && continue
 
     DIGEST=$(echo "$layer" | jq -r '.digest')
     NAME=$(echo "$layer" | jq -r '.annotations["dev.tekton.image.name"]')
-    YAML=$(crane blob "${REPO}@${DIGEST}" | gunzip | tar -xO)
-    VERSION=$(echo "$YAML" | yq eval '.metadata.labels["app.kubernetes.io/version"]' -)
+    crane blob "${REPO}@${DIGEST}" | gunzip | tar -xO > "$RESOURCE_FILE"
+    VERSION=$(yq eval '.metadata.labels["app.kubernetes.io/version"]' "$RESOURCE_FILE")
 
     if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
         echo "ERROR: ${KIND} $NAME is missing the app.kubernetes.io/version label"
@@ -54,8 +56,12 @@ while IFS= read -r layer; do
         exit 1
     fi
 
+    [[ "$NAME" =~ ^[a-z0-9][a-z0-9.-]*$ && "$VERSION" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || { echo "ERROR: unsafe resource identity" >&2; exit 1; }
+    [[ $(yq '.metadata.name' "$RESOURCE_FILE") == "$NAME" ]] || { echo "ERROR: layer/resource name mismatch" >&2; exit 1; }
+    [[ $(yq '.kind | downcase' "$RESOURCE_FILE") == "$KIND" ]] || { echo "ERROR: layer/resource kind mismatch" >&2; exit 1; }
+    [[ ! -e "$OUTPUT" ]] || { echo "ERROR: duplicate resource $OUTPUT" >&2; exit 1; }
     mkdir -p "$(dirname "$OUTPUT")"
-    echo "$YAML" | yq eval '.' -P - > "$OUTPUT"
+    cp "$RESOURCE_FILE" "$OUTPUT"
     echo "Extracted ${KIND}: $NAME"
     COUNT=$((COUNT + 1))
 done <<< "$LAYERS"
