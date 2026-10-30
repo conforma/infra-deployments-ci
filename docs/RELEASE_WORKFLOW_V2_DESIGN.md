@@ -45,7 +45,6 @@ Keep `images.json` with `schemaVersion: 2` and the existing `policy` and
 | `policy` | Three candidate policy digests and their mirror repositories |
 | `components` | Candidate CLI and final Task bundle digests |
 | `inputs.sourceTaskBundle`, `inputs.stepActionsBundle` | Captured source versions for preparation history and the changelog |
-| `inputs.dependencyBundles` | Optional list of extra bundles actually built during preparation, for retention |
 | `inputs.testInputs` | One configuration commit, external test image/data pins, and comparison timestamp |
 | `catalog` | Destination repository/branch and the commit providing previous file contents |
 | `baseline.images` | Expected previous digest of every destination tag, including mirrors |
@@ -103,7 +102,6 @@ placeholders.
     "sourceTaskBundle": {"image": "quay.io/conforma/tekton-task", "digest": "sha256:..."},
     // Original StepAction definitions included during final bundle assembly.
     "stepActionsBundle": {"image": "quay.io/conforma/step-actions", "digest": "sha256:..."},
-    // Optional dependencyBundles is illustrated separately below.
 
     // Makes changelog comparisons and acceptance use consistent test inputs.
     "testInputs": {
@@ -120,7 +118,7 @@ placeholders.
         },
         {"name": "golden-rpm", "image": "quay.io/redhat-user-workloads/rhtap-contract-tenant/golden-rpm/golden-rpm", "digest": "sha256:..."}
       ],
-      // Auxiliary policy data: OCI digests or Git full-commit/path references.
+      // Auxiliary policy data: OCI references pinned to digests.
       "policyData": ["oci::quay.io/redhat-konflux/policy-data@sha256:..."],
       // One evaluation time for both sides of the changelog comparison.
       // Acceptance records its own fresh evaluation time with the results.
@@ -155,197 +153,58 @@ placeholders.
 }
 ```
 
-Only when preparation builds an extra dependency bundle, add this field under
-`inputs` (the repository below is a placeholder):
+## Implementation
 
-```jsonc
-{
-  // Additional modified dependencies built before the final Task bundle.
-  // Omit this field entirely when no extra bundles are built.
-  "dependencyBundles": [
-    {
-      // Repository holding the prepared dependency bundle.
-      "image": "<dependency-bundle-repository>",
-      // Exact content referenced by the prepared YAML.
-      "digest": "sha256:...",
-      // Preserves that content for the lifetime of the release record.
-      "retentionTag": "candidate-<preparation-id>"
-    }
-  ]
-}
-```
+Use the existing Bash, jq, yq, crane and Tekton helpers. There is no separate
+release framework or acceptance protocol.
 
-`configCommit` is one commit of this repository used for the test
-configuration: the policy template and target collections under
-`hack/policy-behavior/`, `acceptance/pub.key`, and the suite's fixtures and
-assertions. Load these from their standard locations at that commit.
-Baseline comparison, candidate comparison, and acceptance use the same
-recorded targets, collections, policy data, and key. OCI data references
-include digests; Git data references include full commit IDs and paths.
-The comparison uses `comparisonTime` on both sides. Acceptance captures a
-fresh timestamp once per run and records it with the test results.
+1. `prepare-release.sh` captures the candidates, test inputs and publication
+   baselines. It extracts the source bundles, updates CLI and policy defaults,
+   pins execution images and Git StepAction commits, and pushes the completed
+   bundle under a unique retention tag. External Git StepActions must already
+   pin their runtime images; unsupported resolvers fail with an explicit error.
+   Fix upstream definitions rather than building extra dependency bundles.
+2. `generate-changelog.sh` reads the completed manifest. It compares policy
+   rules and Golden image behavior against the recorded baseline, and compares
+   exact files extracted from the final bundle against the catalog base commit.
+   Configuration comes from `git archive` at `configCommit`.
+3. After the release PR merges, the existing Go acceptance suite reads
+   `RELEASE_IMAGES`. GitHub Actions checks out `configCommit` normally, so its
+   tests, fixtures, key and templates all come from that commit. Both verification
+   Tasks use the final bundle; all policy and test image inputs use manifest
+   digests. Auxiliary Task/StepAction script cases and positive/negative task
+   policy cases are ordinary Go tests. Reports and logs are saved as artifacts.
+4. The publication job has `needs: acceptance` and reads the same manifest path
+   at the same workflow commit. `publish-release.sh` promotes the recorded
+   digests and copies exact final-bundle files to the catalog. No acceptance
+   certificate, manifest hash handshake, generated test tree or post-test build
+   is needed.
 
-When preparation creates an extra dependency bundle, `inputs.dependencyBundles`
-contains its `image`, `digest`, and `retentionTag`. Omit the list when unused.
-Actual dependency references and their consumers are read directly from the
-prepared YAML. Resource names, versions, and catalog diffs are generated into
-the changelog from the bundle.
+The PR check validates the manifest and prepared definitions and retains the
+56-day policy lead-time check against the recorded baseline. Version 1 records
+remain historical; they cannot enter the version 2 publication path.
 
-Validation requires exactly the three policies, the CLI, and the final Task
-bundle; valid immutable references; all destination baselines; and the known
-publication destinations. Reject duplicate entries and resource paths.
-Version 1 manifests remain historical records and cannot silently enter the
-version 2 publication path.
+## Publication and recovery
 
-## 1. Prepare candidates and changelog
-
-Operators explicitly dispatch a trusted `prepare-release` workflow on the
-default branch. An assembly job has registry write credentials. A separate
-changelog job runs candidate CLI code without publication credentials.
-The workflow returns the release directory for the release PR.
-
-The local `generate-changelog.sh` accepts a completed manifest to render or
-reproduce the changelog. It does not dispatch or manage remote workflows.
-
-Preparation does the following:
-
-1. Resolve the three policy candidates, CLI candidate, source Task bundle,
-   source StepAction bundle, and external test inputs once. Capture
-   `configCommit`, `comparisonTime`, destination tag baselines, and the catalog
-   `baseCommit`. Later publication checks whether those baselines still apply.
-2. Extract Tasks and StepActions. Set Conforma CLI images to the candidate
-   CLI digest and `POLICY_BUNDLE_DIGEST` defaults to the candidate release
-   policy digest. Inspect all declared execution images and remote StepAction
-   references, including conditional steps. Pin image references to digests
-   and Git references to full commits directly in the YAML; inspect the
-   referenced StepActions' runtime images too.
-3. Build and retain the final Task bundle containing the prepared release
-   definitions, then record its digest. If a concrete external dependency
-   needs modified YAML, build a small retained dependency bundle first and
-   point the Task at its digest. Record that bundle in `dependencyBundles`.
-   Otherwise use the existing pinned reference. Include the reference changes
-   in the changelog. A Task cannot refer to the digest of its own bundle.
-4. Extract the final bundle to obtain the exact catalog payload. Derive paths
-   using `tasks/<name>/<version>/<name>.yaml` and
-   `stepactions/<name>/<version>/<name>.yaml`. Require version labels, safe
-   paths, and unique resource identities. Preserve the resource-file bytes;
-   parse metadata without reformatting the files. Compare these paths with
-   the contents at `catalog.baseCommit` for the catalog changelog.
-5. Complete `images.json`, then render `changelog.md` from its pins. Include
-   image changes, source revisions, policy rule changes, policy behavior
-   changes, and Task/StepAction versions and catalog diffs. No comparison
-   resolves source tags again. Operational failures fail preparation;
-   reported behavior differences remain available for review.
-
-For example, the Trusted Artifacts Task's `create-trusted-artifact` reference
-to the Git branch `development` must become a pinned reference before the
-final bundle is built. Including a StepAction in a bundle does not by itself
-change a Task's resolver to use it.
-
-The release directory contains `images.json` and `changelog.md`. Newly built
-bundles keep their retention tags for the lifetime of the release record.
-Preparing again creates a new candidate. Retrying testing or publication uses
-the existing manifest.
-
-## 2. Review and acceptance
-
-The release PR runs manifest validation, artifact/reference integrity checks,
-and the existing policy lead-time check. Use the recorded baseline policy
-digests for comparison and retain the 56-day lead-time requirement.
-Reviewers inspect the changelog and candidate references.
-
-After merge, `konflux-policy` reads the committed manifest and runs full
-acceptance before publication. This is the required full acceptance run;
-the PR does not repeat the complete suite.
-
-The tests must:
-
-- Confirm the final bundle uses the recorded CLI and release-policy digests.
-  Inspect its declared execution references and referenced StepActions;
-  all executable image and remote resource references must be immutable.
-- Run the Golden container and RPM scenarios through both verification Tasks
-  with the recorded candidates and test inputs. Check valid reports and
-  operational success as well as PipelineRun completion.
-- Exercise the other released Tasks and StepActions, including relevant
-  conditional paths, and evaluate task-policy and build-task-policy using
-  representative fixtures. Keep explicit cases and expected assertions in
-  ordinary tests. Adding a released resource requires adding its test.
-- Validate that the catalog files extracted from the final bundle are valid
-  definitions with the expected paths and versions.
-
-Policy behavior differences in the changelog remain informational. Test
-assertions cover the intended behavior of their fixtures; no release-specific
-expectation manifest or coverage-exception process is required.
-
-Tests run without publication credentials. Save the manifest hash, tested
-digests, acceptance timestamp, and reports as workflow artifacts. Publication
-depends on the successful acceptance job for that same manifest.
-
-## 3. Publish and verify
-
-Use one publication job, serialized with other releases and without
-cancellation of an active publication. It reads the tested manifest and
-extracts catalog files from the recorded final bundle.
-
-Before any write, inspect every canonical/mirror tag and every catalog path
-supplied by the bundle. The same rule applies to both:
+Before any write, check all eight destination tags and each candidate catalog
+path. Recheck immediately before applying changes:
 
 | Current value | Action |
 | --- | --- |
-| Equals the candidate | Already applied; verify and skip |
-| Equals the recorded baseline | Apply the candidate |
-| Differs from both, or cannot be read | Stop before publication |
+| Candidate digest or exact file bytes | Verify and skip |
+| Recorded baseline digest or file bytes | Apply candidate |
+| Anything else, or read failure | Stop |
 
-For tags, values are image digests and the baseline is `baseline.images`.
-For catalog paths, values are exact file contents; the baseline is the
-corresponding file at `catalog.baseCommit` and the candidate comes from the
-final bundle. A path absent at the base commit may be added if it is still
-absent. Distinguish confirmed absence from a failed read. A missing image
-tag is an error.
+A new catalog path must still be absent. Missing image tags are errors. Unrelated
+catalog files and old versions remain unchanged. Copy images with
+`skopeo --all --preserve-digests`; push catalog commits without force. After a
+rejected push or lost acknowledgement, fetch and compare actual contents before
+retrying. Verify all destinations at the end and retain the publication log.
 
-This catches stale policy-only releases even when catalog files have not
-changed. It also permits retries after a catalog push succeeded but its
-acknowledgement or final verification failed.
+Serialize the workflow and never cancel active publication. Registry and Git
+updates are not atomic; rerun the same release to finish a partial publication.
+A stale release or deliberate rollback requires a newly reviewed manifest with
+current baselines. Recovery uses destination state, not a previous run's log.
 
-Publication then proceeds in order:
-
-1. Recheck each pending tag, promote its recorded candidate digest to
-   `:konflux` and any mirror, preserving the digest, and verify the result.
-2. Fetch the current catalog branch and recheck the candidate paths. Apply
-   only pending additions or updates on that head, preserving all other
-   files and older versions. Commit and push without force. If the push is
-   rejected or its result is unclear, reread the branch and use the same
-   content checks before retrying; do not merge conflicting candidate files.
-   Unrelated catalog changes do not invalidate the release.
-3. Verify that every destination tag has its candidate digest and every
-   candidate catalog path has the exact bundle contents. Save observed
-   digests, catalog commit, manifest hash, and workflow URL in a publication
-   result, including partial results on failure.
-
-The release updates catalog definitions supplied by the bundle. Catalog
-removals remain separate reviewed changes. Commit messages can include the
-manifest hash and workflow URL for traceability; retry decisions use actual
-contents.
-
-There is no atomic transaction across Quay and Git. Recheck state before
-writes, report detected interference, and rerun the same manifest to finish
-pending operations. All automated writers to these release destinations must
-follow the same publication process. Recovery does not depend on a previous
-run successfully saving its result.
-
-Manual dispatch uses the same acceptance and publication checks. A deliberate
-rollback requires a reviewed manifest with current baselines and historical
-candidate digests. An old manifest cannot bypass the stale-state checks.
-
-## Implementation order
-
-1. Add manifest validation and candidate preparation, reusing the existing
-   bundle extraction and policy-digest helpers where appropriate. Ensure
-   catalog extraction preserves resource bytes.
-2. Make changelog generation and acceptance consume manifest pins. Add the
-   missing tests for released policies, Tasks, and StepActions.
-3. Replace post-test rebuilding with digest promotion and one catalog update
-   from the tested bundle. Add the shared baseline/candidate/conflict checks.
-4. Verify stale releases, partial tag updates, already-published catalog files,
-   unrelated catalog edits, missing baseline files, and ambiguous pushes.
-   Update `RELEASE_WORKFLOW.md` when the implementation is live.
+See [the operator guide](RELEASE_WORKFLOW.md) for commands, credentials and
+coverage. New released resources require explicit acceptance cases.
