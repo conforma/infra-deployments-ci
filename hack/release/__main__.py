@@ -6,6 +6,7 @@ from .artifacts import Registry, write_resources
 from .integrity import inspect
 from .manifest import BUNDLE, candidates, load, ref
 from .prepare import prepare
+from .config import materialize, catalog_changelog
 
 
 def main():
@@ -17,6 +18,10 @@ def main():
     extract = commands.add_parser('extract')
     extract.add_argument('manifest')
     extract.add_argument('output')
+    config = commands.add_parser('config')
+    config.add_argument('manifest')
+    config.add_argument('output')
+    commands.add_parser('catalog-changelog').add_argument('manifest')
     args = parser.parse_args()
     if args.command == 'prepare':
         prepare(args.output)
@@ -26,6 +31,10 @@ def main():
         inspect(manifest)
     elif args.command == 'extract':
         write_resources(Registry().resources(ref(candidates(manifest)[BUNDLE])), args.output)
+    elif args.command == 'config':
+        materialize(manifest, args.output)
+    elif args.command == 'catalog-changelog':
+        catalog_changelog(manifest)
 
 
 if __name__ == '__main__':

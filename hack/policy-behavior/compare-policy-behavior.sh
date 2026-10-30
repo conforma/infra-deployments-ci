@@ -50,6 +50,7 @@ Arguments:
 Options:
   --targets FILE             Target definitions (default: ${TARGETS_FILE})
   --policy-template FILE     EnterpriseContractPolicy template (default: ${POLICY_TEMPLATE})
+  --public-key FILE          Public key captured with the test configuration
   --report FILE              Write the Markdown report to FILE (default: stdout)
   --container-engine CMD     Container engine (default: \$CONTAINER_ENGINE or docker)
   --effective-time TIME      Shared RFC3339 policy effective time (default: now)
@@ -64,6 +65,11 @@ die() {
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --public-key)
+            [[ $# -ge 2 ]] || die "--public-key requires a file path"
+            PUBLIC_KEY_FILE="$2"
+            shift 2
+            ;;
         --targets)
             [[ $# -ge 2 ]] || die "--targets requires a file path"
             TARGETS_FILE="$2"

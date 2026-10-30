@@ -15,38 +15,23 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Generates a release changelog comparing :latest (to be promoted) against
-# :konflux (current production) for all Conforma images.
-#
-# By default creates a release directory at releases/<YYYY-MM-DDTHH:MM:SS>/
-# containing changelog.md and images.json (machine-readable image inputs
-# for the release workflow).
-#
-# Pass a directory argument to write elsewhere, or "-" to write the
-# changelog to stdout (images.json is skipped in this mode).
-#
-# Usage:
-#   ./hack/generate-changelog.sh                  # → releases/2026-06-30T14:30:00/
-#   ./hack/generate-changelog.sh path/output/     # → path/output/
-#   ./hack/generate-changelog.sh -                # → stdout (changelog only)
-#
-# Dependencies:
-#   crane, gh, jq, go, git
-#
-# Output:
-#   <release-dir>/changelog.md  — human-readable release notes
-#   <release-dir>/images.json   — machine-readable image list for the workflow
+# Render a prepared release manifest. This command never selects new candidates.
+# Usage: ./hack/generate-changelog.sh releases/<id>/images.json [output-dir|-]
+# Dependencies: release/requirements.txt, crane, gh, jq, yq, go, git, docker.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-RELEASE_DIR="${1:-${REPO_ROOT}/releases/$(date -u +%Y-%m-%dT%H:%M:%S)}"
+CANDIDATE_IMAGES_FILE="${1:?Usage: generate-changelog.sh <images.json> [output-dir|-]}"
+CANDIDATE_IMAGES_FILE="$(cd "$(dirname "$CANDIDATE_IMAGES_FILE")" && pwd)/$(basename "$CANDIDATE_IMAGES_FILE")"
+"${SCRIPT_DIR}/release.sh" validate "$CANDIDATE_IMAGES_FILE"
+RELEASE_DIR="${2:-$(dirname "$CANDIDATE_IMAGES_FILE")}"
 
 TMPDIR_BASE=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_BASE"' EXIT
-CANDIDATE_IMAGES_FILE="${TMPDIR_BASE}/images.json"
+"${SCRIPT_DIR}/release.sh" config "$CANDIDATE_IMAGES_FILE" "${TMPDIR_BASE}/config"
 POLICY_BEHAVIOR_FILE="${TMPDIR_BASE}/policy-behavior.md"
 
 # ---------------------------------------------------------------------------
@@ -160,7 +145,7 @@ render_rule_diff() {
     diff_json=$(cd "${REPO_ROOT}/hack/policy-rule-diff" && go run . \
         -bundle -json \
         -doc-base-url "https://conforma.dev/docs/policy/packages" \
-        "${image}:konflux" "${image}:latest" 2>/dev/null)
+        "$(baseline_ref "$image")" "$(candidate_ref "$image")")
 
     local added removed
     added=$(echo "$diff_json" | jq '.added | length')
@@ -203,41 +188,12 @@ render_rule_diff() {
     fi
 }
 
-write_candidate_images() {
-    local output_file="$1"
-    local images_json='{"policy":[],"components":[]}'
-    local entry image mirror digest
+candidate_ref() {
+    jq -er --arg image "$1" '(.policy + .components)[] | select(.image == $image) | "\(.image)@\(.digest)"' "$CANDIDATE_IMAGES_FILE"
+}
 
-    for entry in "${POLICY_IMAGE_ENTRIES[@]}"; do
-        IFS='|' read -r image mirror <<< "$entry"
-        echo "  resolving ${image}:latest..." >&2
-        if ! digest=$(crane digest "${image}:latest" 2>/dev/null); then
-            echo "ERROR: Failed to resolve ${image}:latest" >&2
-            return 1
-        fi
-        if [[ ! "$digest" =~ ^sha256:[0-9a-fA-F]{64}$ ]]; then
-            echo "ERROR: crane returned an invalid digest for ${image}:latest: ${digest}" >&2
-            return 1
-        fi
-        images_json=$(jq --arg img "$image" --arg dig "$digest" --arg mir "$mirror" \
-            '.policy += [{"image": $img, "digest": $dig, "mirrors": [$mir]}]' <<< "$images_json")
-    done
-
-    for image in "${COMPONENT_IMAGES[@]}"; do
-        echo "  resolving ${image}:latest..." >&2
-        if ! digest=$(crane digest "${image}:latest" 2>/dev/null); then
-            echo "ERROR: Failed to resolve ${image}:latest" >&2
-            return 1
-        fi
-        if [[ ! "$digest" =~ ^sha256:[0-9a-fA-F]{64}$ ]]; then
-            echo "ERROR: crane returned an invalid digest for ${image}:latest: ${digest}" >&2
-            return 1
-        fi
-        images_json=$(jq --arg img "$image" --arg dig "$digest" \
-            '.components += [{"image": $img, "digest": $dig}]' <<< "$images_json")
-    done
-
-    echo "$images_json" | jq . > "$output_file"
+baseline_ref() {
+    jq -er --arg image "$1" '.baseline.images[] | select(.reference == ($image + ":konflux")) | $image + "@" + .digest' "$CANDIDATE_IMAGES_FILE"
 }
 
 # ---------------------------------------------------------------------------
@@ -261,8 +217,8 @@ echo "## Images"
 echo ""
 
 for image in "${ALL_IMAGES[@]}"; do
-    echo "  resolving ${image}:latest..." >&2
-    digest=$(crane digest "${image}:latest" 2>/dev/null)
+    echo "  reading recorded ${image}..." >&2
+    digest="$(candidate_ref "$image")"
     local_name="${image##*/}"
     echo "- **${local_name}** — \`${digest}\`"
 done
@@ -279,8 +235,8 @@ for entry in "${COMMIT_LOG_SOURCES[@]}"; do
     echo "Processing ${github_repo}..." >&2
 
     echo "  fetching revisions..." >&2
-    konflux_rev=$(get_revision "${image_repo}:konflux")
-    latest_rev=$(get_revision "${image_repo}:latest")
+    konflux_rev=$(get_revision "$(baseline_ref "$image_repo")")
+    latest_rev=$(get_revision "$(candidate_ref "$image_repo")")
 
     echo "  konflux: ${konflux_rev}" >&2
     echo "  latest:  ${latest_rev}" >&2
@@ -335,18 +291,21 @@ fi
 
 echo "" >&2
 
-if [[ "$RELEASE_DIR" != "-" ]]; then
-    echo "Writing images.json..." >&2
-    CANDIDATE_IMAGES_FILE="${RELEASE_DIR}/images.json"
+if [[ "$RELEASE_DIR" != "-" && "${RELEASE_DIR}/images.json" != "$CANDIDATE_IMAGES_FILE" ]]; then
+    cp "$CANDIDATE_IMAGES_FILE" "${RELEASE_DIR}/images.json"
 fi
 
-write_candidate_images "$CANDIDATE_IMAGES_FILE"
+"${SCRIPT_DIR}/release.sh" catalog-changelog "$CANDIDATE_IMAGES_FILE"
 
 echo "" >&2
 echo "Comparing policy behavior..." >&2
 if ! "${SCRIPT_DIR}/policy-behavior/compare-policy-behavior.sh" \
     --report "$POLICY_BEHAVIOR_FILE" \
-    "$CANDIDATE_IMAGES_FILE" > /dev/null; then
+    --targets "${TMPDIR_BASE}/config/hack/policy-behavior/targets.json" \
+    --policy-template "${TMPDIR_BASE}/config/hack/policy-behavior/golden-policy.yaml" \
+    --public-key "${TMPDIR_BASE}/config/acceptance/pub.key" \
+    --effective-time "$(jq -r '.inputs.testInputs.comparisonTime' "$CANDIDATE_IMAGES_FILE")" \
+    "${TMPDIR_BASE}/config/before.json" "$CANDIDATE_IMAGES_FILE" > /dev/null; then
     echo "ERROR: Policy behavior comparison failed" >&2
     exit 1
 fi
