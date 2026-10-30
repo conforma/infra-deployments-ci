@@ -20,4 +20,4 @@ kind: Kustomization
 
 # Install Enterprise Contract CRDs
 resources:
-  - https://raw.githubusercontent.com/conforma/crds/main/config/crd/bases/appstudio.redhat.com_enterprisecontractpolicies.yaml
+  - https://raw.githubusercontent.com/conforma/crds/7ac0efc892909f0df2624be8f7def99f03ab39e6/config/crd/bases/appstudio.redhat.com_enterprisecontractpolicies.yaml
