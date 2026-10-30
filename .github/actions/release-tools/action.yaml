@@ -1,0 +1,29 @@
+name: Release tools
+description: Install the shared release manifest and OCI tools
+inputs:
+  read-auth:
+    description: Optional Docker config JSON containing read-only registry credentials
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version-file: acceptance/go.mod
+        cache-dependency-path: acceptance/go.sum
+    - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b
+    - shell: bash
+      run: go install github.com/mikefarah/yq/v4@v4.54.1
+    - shell: bash
+      env:
+        READ_AUTH_JSON: ${{ inputs.read-auth }}
+      run: |
+        set -euo pipefail
+        if [[ -n "$READ_AUTH_JSON" ]]; then
+          umask 077
+          mkdir -p "$RUNNER_TEMP/release-read-auth"
+          jq -e 'select(.auths | type == "object")' <<< "$READ_AUTH_JSON" > "$RUNNER_TEMP/release-read-auth/config.json"
+          echo "DOCKER_CONFIG=$RUNNER_TEMP/release-read-auth" >> "$GITHUB_ENV"
+          echo "REGISTRY_AUTH_FILE=$RUNNER_TEMP/release-read-auth/config.json" >> "$GITHUB_ENV"
+        fi

@@ -30,7 +30,7 @@ spec:
       description: Trusted artifact URI containing the snapshot
   steps:
     - name: write-snapshot
-      image: busybox:latest
+      image: docker.io/library/busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
       env:
         - name: SNAPSHOT
           value: "$(params.SNAPSHOT)"

@@ -1,6 +1,4 @@
----
 name: konflux-policy
-
 on:
   push:
     branches: [main]
@@ -8,318 +6,127 @@ on:
   workflow_dispatch:
     inputs:
       release_dir:
-        description: 'Release date (e.g. 2026-08-11T17:36:11) — matches a directory under releases/'
+        description: Release directory under releases/
         type: string
         required: true
-      run_tag:
-        description: 'Tag tested images as :konflux'
-        type: boolean
-        default: true
-      run_tekton_task_bundle:
-        description: 'Rebuild tekton-task bundle with updated policy digest'
-        type: boolean
-        default: true
-      run_tekton_catalog:
-        description: 'Sync task definitions to tekton-catalog'
-        type: boolean
-        default: true
-  # Disabled as part of konflux release freeze and ITN-2026-00051
-  # schedule:
-  #   # At 08:30 UTC on Tuesday
-  #   - cron: '30 8 * * 2'
 
 permissions:
   contents: read
 
+# Serialize the complete release so acceptance and publication cannot overtake
+# another release. A running publication must never be cancelled by a new push.
+concurrency:
+  group: konflux-release
+  cancel-in-progress: false
+
 jobs:
-  acceptance-tests:
+  acceptance:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     outputs:
-      bundle-digests: ${{ steps.resolve-digests.outputs.bundle-digests }}
-      release-images: ${{ steps.release-images.outputs.images }}
-
+      manifest: ${{ steps.release.outputs.manifest }}
     steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        fetch-depth: 0
-        persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/release-tools
+        with:
+          read-auth: ${{ secrets.REGISTRY_READ_AUTH_JSON }}
+      - name: Install acceptance tools
+        run: |
+          set -euo pipefail
+          go install sigs.k8s.io/kind@v0.33.0
+          go install sigs.k8s.io/kustomize/kustomize/v5@v5.2.1
+      - name: Select and check release
+        id: release
+        env:
+          RELEASE_DIR: ${{ inputs.release_dir }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$RELEASE_DIR" ]]; then
+            directory=${RELEASE_DIR#releases/}
+            [[ "$directory" =~ ^[A-Za-z0-9][A-Za-z0-9_.:-]*$ ]]
+            manifests=("releases/$directory/images.json")
+          else
+            mapfile -t manifests < <(git diff --name-only --diff-filter=AM "$BEFORE_SHA" "$AFTER_SHA" -- releases/ | grep -E '^releases/[^/]+/images.json$')
+          fi
+          [[ ${#manifests[@]} == 1 ]] || { echo 'Select exactly one release using manual dispatch'; exit 1; }
+          manifest=${manifests[0]}
+          ./hack/check-release-inputs.sh "$manifest"
+          echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
+          echo "config=$(jq -r '.inputs.testInputs.configCommit' "$manifest")" >> "$GITHUB_OUTPUT"
+          echo "RELEASE_IMAGES=$GITHUB_WORKSPACE/$manifest" >> "$GITHUB_ENV"
+          echo "RELEASE_CATALOG=$RUNNER_TEMP/release-catalog" >> "$GITHUB_ENV"
+          bundle=$(jq -r '.components[] | select(.image == "quay.io/conforma/tekton-task") | .image+"@"+.digest' "$manifest")
+          ./hack/extract-bundle-resources.sh "$bundle" "$RUNNER_TEMP/release-catalog" task tasks
+          ./hack/extract-bundle-resources.sh "$bundle" "$RUNNER_TEMP/release-catalog" stepaction stepactions
+          ./hack/check-release-inputs.sh "$manifest" "$RUNNER_TEMP/release-catalog"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ steps.release.outputs.config }}
+          path: test-config
+          persist-credentials: false
+      - name: Test recorded candidate
+        env:
+          ACCEPTANCE_REPORT_DIR: ${{ github.workspace }}/acceptance-result/reports
+        run: |
+          set -euo pipefail
+          mkdir -p acceptance-result
+          make -C test-config acceptance 2>&1 | tee acceptance-result/acceptance.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: release-acceptance
+          path: acceptance-result/
+          if-no-files-found: warn
 
-    - name: Read release images.json
-      id: release-images
-      env:
-        RELEASE_DIR: ${{ inputs.release_dir }}
-        BEFORE_SHA: ${{ github.event.before }}
-        AFTER_SHA: ${{ github.sha }}
-      run: |
-        set -euo pipefail
-
-        if [[ -n "$RELEASE_DIR" ]]; then
-          # Normalize: accept bare date or full path
-          RELEASE_DIR="${RELEASE_DIR#releases/}"
-          IMAGES_FILE="releases/${RELEASE_DIR}/images.json"
-        else
-          IMAGES_FILE=$(git diff --name-only --diff-filter=A "$BEFORE_SHA" "$AFTER_SHA" \
-            | { grep '^releases/.*/images\.json$' || true; } | head -1)
-        fi
-
-        if [[ -z "$IMAGES_FILE" || ! -f "$IMAGES_FILE" ]]; then
-          echo "ERROR: No images.json found" >&2
-          exit 1
-        fi
-        echo "Using ${IMAGES_FILE}" >&2
-        echo "images=$(jq -c . "$IMAGES_FILE")" >> "$GITHUB_OUTPUT"
-
-    - name: Set up Go
-      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-      with:
-        go-version-file: acceptance/go.mod
-
-    - name: Install crane
-      uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
-
-    - name: Install yq
-      uses: mikefarah/yq@504fc38780cc46be8444ea1b72fb55919fc0bfb0 # v4.54.1
-
-    - name: Install kind
-      uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
-      with:
-        install_only: true
-
-    - name: Resolve tested image digests
-      id: resolve-digests
-      run: |
-        set -euo pipefail
-        DIGESTS=$(./hack/resolve-tested-digests.sh | jq -c .)
-        echo "bundle-digests=${DIGESTS}" >> "$GITHUB_OUTPUT"
-
-    - name: Run acceptance tests
-      run: make acceptance
-
-  tag:
-    if: ${{ github.repository == 'conforma/infra-deployments-ci' && (github.event_name != 'workflow_dispatch' || inputs.run_tag != false) }}
+  publish:
+    if: github.repository == 'conforma/infra-deployments-ci'
+    needs: acceptance
     runs-on: ubuntu-latest
-    needs: [acceptance-tests]
-
     steps:
-
-    - name: Log in to quay.io/enterprise-contract
-      uses: redhat-actions/podman-login@50c2d9a331bb67c8fdab99b86455fad05e2e3252 # v2.0
-      with:
-        username: ${{ secrets.BUNDLE_PUSH_USER_EC }}
-        password: ${{ secrets.BUNDLE_PUSH_PASS_EC }}
-        registry: quay.io/enterprise-contract
-
-    - name: Log in to quay.io/conforma
-      uses: redhat-actions/podman-login@50c2d9a331bb67c8fdab99b86455fad05e2e3252 # v2.0
-      with:
-        username: ${{ secrets.BUNDLE_PUSH_USER_CONFORMA }}
-        password: ${{ secrets.BUNDLE_PUSH_PASS_CONFORMA }}
-        registry: quay.io/conforma
-
-    - name: Tag policy images
-      env:
-        RELEASE_IMAGES: ${{ needs.acceptance-tests.outputs.release-images }}
-      run: |
-        set -euo pipefail
-
-        echo "$RELEASE_IMAGES" | jq -r '.policy[] | "\(.image)|\(.digest)|\(.mirrors | join(","))"' | \
-          while IFS='|' read -r image digest mirrors; do
-            echo "Updating ${image}:konflux (from digest ${digest})"
-            skopeo copy --all --digestfile image.digest \
-              "docker://${image}@${digest}" "docker://${image}:konflux"
-            echo "Image digest: $(cat image.digest)"
-
-            IFS=',' read -ra MIRROR_LIST <<< "$mirrors"
-            for mirror in "${MIRROR_LIST[@]}"; do
-              [[ -z "$mirror" ]] && continue
-              echo "Updating ${mirror}:konflux"
-              skopeo copy --all --digestfile image.digest \
-                "docker://${image}@${digest}" "docker://${mirror}:konflux"
-              echo "Image digest: $(cat image.digest)"
-            done
-          done
-
-    - name: Tag tested images by digest
-      env:
-        BUNDLE_DIGESTS: ${{ needs.acceptance-tests.outputs.bundle-digests }}
-      run: |
-        set -euo pipefail
-
-        echo "$BUNDLE_DIGESTS" | jq -r '
-          to_entries[] | select(.key | test("tekton-task") | not) |
-          "\(.key)|\(.value)"' | while IFS='|' read -r url pinned; do
-          repo="${url%:*}"
-          echo "Tagging ${pinned} → ${repo}:konflux"
-          skopeo copy --all --digestfile image.digest \
-            "docker://${pinned}" "docker://${repo}:konflux"
-          echo "Image digest: $(cat image.digest)"
-        done
-
-  update-task-definitions:
-    if: ${{ github.repository == 'conforma/infra-deployments-ci' && !cancelled() && !failure() && (github.event_name != 'workflow_dispatch' || inputs.run_tekton_task_bundle != false || inputs.run_tekton_catalog != false) }}
-    runs-on: ubuntu-latest
-    needs: [acceptance-tests, tag]
-
-    steps:
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        # This job pushes to tekton-catalog via the App token, not this repo's
-        # GITHUB_TOKEN, so don't persist it in the checkout's git config.
-        persist-credentials: false
-
-    - name: Install crane
-      uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
-
-    - name: Install yq
-      uses: mikefarah/yq@504fc38780cc46be8444ea1b72fb55919fc0bfb0 # v4.54.1
-
-    - name: Log in to quay.io/conforma
-      env:
-        CONFORMA_USER: ${{ secrets.BUNDLE_PUSH_USER_CONFORMA }}
-        CONFORMA_PASS: ${{ secrets.BUNDLE_PUSH_PASS_CONFORMA }}
-      run: crane auth login quay.io -u "$CONFORMA_USER" -p "$CONFORMA_PASS"
-
-    - name: Extract all tasks from tested bundle
-      env:
-        BUNDLE_DIGESTS: ${{ needs.acceptance-tests.outputs.bundle-digests }}
-      run: |
-        set -euo pipefail
-
-        BUNDLE=$(echo "$BUNDLE_DIGESTS" | jq -r '
-          to_entries[] | select(.key | test("tekton-task")) | .value')
-
-        if [ -z "$BUNDLE" ]; then
-          echo "ERROR: No tekton-task bundle found in BUNDLE_DIGESTS"
-          exit 1
-        fi
-
-        ./hack/extract-bundle-resources.sh "$BUNDLE" /tmp/catalog-tasks task tasks
-
-    - name: Update policy bundle digest in task definitions
-      run: ./hack/update-policy-digest.sh /tmp/catalog-tasks/tasks/
-
-    - name: Extract step actions from published bundle
-      run: |
-        set -euo pipefail
-        BUNDLE="quay.io/conforma/step-actions"
-        DIGEST=$(crane digest "${BUNDLE}:snapshot")
-        ./hack/extract-bundle-resources.sh "${BUNDLE}@${DIGEST}" /tmp/catalog-tasks stepaction stepactions
-
-    - name: Upload task definitions
-      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-      with:
-        name: task-definitions
-        path: /tmp/catalog-tasks
-
-  tekton-task-bundle:
-    if: ${{ github.repository == 'conforma/infra-deployments-ci' && !cancelled() && !failure() && needs.update-task-definitions.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.run_tekton_task_bundle != false) }}
-    runs-on: ubuntu-latest
-    needs: [update-task-definitions]
-
-    steps:
-    - name: Install crane
-      uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
-
-    - name: Install tkn
-      run: |
-        set -euo pipefail
-        VERSION=$(gh release view --repo tektoncd/cli --json tagName -q .tagName)
-        URL="https://github.com/tektoncd/cli/releases/download/${VERSION}/tkn_${VERSION#v}_Linux_x86_64.tar.gz"
-        curl -sSL "$URL" | sudo tar -xz -C /usr/local/bin tkn
-      env:
-        GH_TOKEN: ${{ github.token }}
-
-    - name: Log in to quay.io/conforma
-      env:
-        CONFORMA_USER: ${{ secrets.BUNDLE_PUSH_USER_CONFORMA }}
-        CONFORMA_PASS: ${{ secrets.BUNDLE_PUSH_PASS_CONFORMA }}
-      run: crane auth login quay.io -u "$CONFORMA_USER" -p "$CONFORMA_PASS"
-
-    - name: Download task definitions
-      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-      with:
-        name: task-definitions
-        path: /tmp/catalog-tasks
-
-    - name: Push tekton-task bundle
-      env:
-        RUN_ID: ${{ github.run_id }}
-        RUN_ATTEMPT: ${{ github.run_attempt }}
-      run: |
-        set -euo pipefail
-
-        TASK_FILES=()
-        while IFS= read -r f; do
-          TASK_FILES+=("-f" "$f")
-        done < <(find /tmp/catalog-tasks -name '*.yaml' -type f)
-
-        # Push this run's bundle to its own unique tag first, then move
-        # :konflux to the same digest. Because :konflux is otherwise the only
-        # tag the bundle ever gets, each push moves :konflux and leaves the
-        # previous digest untagged (orphaned) in Quay. run_id + run_attempt
-        # make the per-run tag unique, so every pushed digest keeps a tag.
-        # Tagging :konflux from our own unique tag (rather than re-reading the
-        # mutable :konflux) also avoids a race where a concurrent run's push
-        # could leave this run's digest untagged.
-        # The run- prefix reserves a distinct namespace for these bundle tags:
-        # the repo also carries Konflux build tags (gh-*, kf-*) and cosign
-        # signatures (sha256-*), so a dedicated prefix lets the orphan cleanup
-        # (EC-2113) age out run-* tags without matching anything else.
-        persistent_tag="run-$(date -u +%Y-%m-%d)-${RUN_ID}-${RUN_ATTEMPT}"
-        tkn bundle push "quay.io/conforma/tekton-task:${persistent_tag}" "${TASK_FILES[@]}"
-        crane tag "quay.io/conforma/tekton-task:${persistent_tag}" konflux
-        echo "Pushed tekton-task bundle as ${persistent_tag} and updated :konflux"
-
-  tekton-catalog:
-    if: ${{ github.repository == 'conforma/infra-deployments-ci' && !cancelled() && !failure() && needs.update-task-definitions.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.run_tekton_catalog != false) }}
-    runs-on: ubuntu-latest
-    needs: [update-task-definitions]
-
-    steps:
-    - name: Download task definitions
-      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-      with:
-        name: task-definitions
-        path: /tmp/catalog-tasks
-
-    - name: Generate token
-      id: app-token
-      uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
-      with:
-        app-id: ${{ secrets.EC_AUTOMATION_APP_ID }}
-        private-key: ${{ secrets.EC_AUTOMATION_KEY }}
-        owner: conforma
-        repositories: tekton-catalog
-        # Least privilege: the token only checks out and pushes to tekton-catalog.
-        permission-contents: write
-
-    - name: Checkout tekton-catalog
-      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      with:
-        repository: conforma/tekton-catalog
-        ref: konflux
-        path: tekton-catalog
-        token: ${{ steps.app-token.outputs.token }}
-
-    - name: Push task definitions to konflux branch
-      run: |
-        set -euo pipefail
-
-        cd tekton-catalog
-
-        cp -r /tmp/catalog-tasks/tasks/* tasks/
-        mkdir -p stepactions
-        cp -r /tmp/catalog-tasks/stepactions/* stepactions/
-
-        git add tasks/ stepactions/
-
-        if git diff --cached --quiet; then
-          echo "No changes to task or step-action definitions"
-          exit 0
-        fi
-
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        git config user.name "github-actions[bot]"
-        git commit -m "Update task definitions from tested bundle" \
-          -m "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-        git push origin konflux
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/release-tools
+      - name: Catalog token
+        id: app-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        with:
+          app-id: ${{ secrets.EC_AUTOMATION_APP_ID }}
+          private-key: ${{ secrets.EC_AUTOMATION_KEY }}
+          owner: conforma
+          repositories: tekton-catalog
+          permission-contents: write
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: conforma/tekton-catalog
+          ref: konflux
+          fetch-depth: 0
+          path: tekton-catalog
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Promote tested candidate and update catalog
+        env:
+          CONFORMA_USER: ${{ secrets.BUNDLE_PUSH_USER_CONFORMA }}
+          CONFORMA_PASS: ${{ secrets.BUNDLE_PUSH_PASS_CONFORMA }}
+          EC_USER: ${{ secrets.BUNDLE_PUSH_USER_EC }}
+          EC_PASS: ${{ secrets.BUNDLE_PUSH_PASS_EC }}
+          MANIFEST: ${{ needs.acceptance.outputs.manifest }}
+        run: |
+          set -euo pipefail
+          export REGISTRY_AUTH_FILE="$RUNNER_TEMP/release-auth.json"
+          trap 'rm -f "$REGISTRY_AUTH_FILE"' EXIT
+          umask 077
+          jq -n '{auths:{"quay.io/conforma":{auth:((env.CONFORMA_USER+":"+env.CONFORMA_PASS)|@base64)},"quay.io/enterprise-contract":{auth:((env.EC_USER+":"+env.EC_PASS)|@base64)}}}' > "$REGISTRY_AUTH_FILE"
+          sudo apt-get update -qq
+          sudo apt-get install -y skopeo
+          ./hack/publish-release.sh "$MANIFEST" tekton-catalog 2>&1 | tee publication.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: publication-result
+          path: publication.log
+          if-no-files-found: warn

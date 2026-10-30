@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 2,
+  "policy": [
+    {
+      "image": "quay.io/conforma/release-policy",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mirrors": [
+        "quay.io/enterprise-contract/ec-release-policy"
+      ]
+    },
+    {
+      "image": "quay.io/conforma/task-policy",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mirrors": [
+        "quay.io/enterprise-contract/ec-task-policy"
+      ]
+    },
+    {
+      "image": "quay.io/conforma/build-task-policy",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mirrors": [
+        "quay.io/enterprise-contract/ec-build_task-policy"
+      ]
+    }
+  ],
+  "components": [
+    {
+      "image": "quay.io/conforma/cli",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "image": "quay.io/conforma/tekton-task",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "retentionTag": "candidate-test"
+    }
+  ],
+  "inputs": {
+    "sourceTaskBundle": {
+      "image": "quay.io/conforma/tekton-task",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "stepActionsBundle": {
+      "image": "quay.io/conforma/step-actions",
+      "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "testInputs": {
+      "configCommit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "comparisonTime": "2026-10-30T00:00:00Z",
+      "targets": [
+        {
+          "image": "quay.io/example/golden-container",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "golden-container"
+        },
+        {
+          "image": "quay.io/example/golden-rpm",
+          "digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "name": "golden-rpm"
+        }
+      ],
+      "policyData": [
+        "oci::quay.io/example/data@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      ]
+    }
+  },
+  "catalog": {
+    "repository": "conforma/tekton-catalog",
+    "branch": "konflux",
+    "baseCommit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  },
+  "baseline": {
+    "images": [
+      {
+        "reference": "quay.io/conforma/release-policy:konflux",
+        "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "reference": "quay.io/conforma/task-policy:konflux",
+        "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "reference": "quay.io/conforma/build-task-policy:konflux",
+        "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "reference": "quay.io/enterprise-contract/ec-release-policy:konflux",
+        "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "reference": "quay.io/enterprise-contract/ec-task-policy:konflux",
+        "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "reference": "quay.io/enterprise-contract/ec-build_task-policy:konflux",
+        "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "reference": "quay.io/conforma/cli:konflux",
+        "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "reference": "quay.io/conforma/tekton-task:konflux",
+        "digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ]
+  }
+}

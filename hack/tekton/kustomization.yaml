@@ -18,9 +18,9 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# Install Tekton Pipelines from official release
+# Fixed release: https://github.com/tektoncd/pipeline/releases/tag/v1.17.1
 resources:
-  - https://storage.googleapis.com/tekton-releases/pipeline/latest/release.yaml
+  - https://infra.tekton.dev/tekton-releases/pipeline/previous/v1.17.1/release.yaml
 
 patches:
   # Enable Tekton feature flags for task resolution and step actions

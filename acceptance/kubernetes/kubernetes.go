@@ -108,8 +108,28 @@ func loadPipelineWithBundle(repoRoot, filename, taskBundle string) (*pipeline.Pi
 		return nil, fmt.Errorf("parsing pipeline %s: %w", filename, err)
 	}
 
+	release, err := testenv.LoadRelease()
+	if err != nil {
+		return nil, err
+	}
+	if release != nil {
+		taskBundle = release.Ref("tekton-task")
+	}
 	for i := range pipelineObj.Spec.Tasks {
 		task := &pipelineObj.Spec.Tasks[i]
+		if release != nil && task.Name == "verify" {
+			for name, value := range map[string]string{"EFFECTIVE_TIME": testenv.EffectiveTime, "ALLOW_PAST_EFFECTIVE_TIME": "true"} {
+				task.Params = append(task.Params, pipeline.Param{Name: name, Value: pipeline.ParamValue{Type: pipeline.ParamTypeString, StringVal: value}})
+			}
+			if filename == "conforma-ta.yaml" {
+				for name, value := range map[string]string{"ENABLE_VSA": "true", "ATTESTATION_FORMAT": "predicate", "ociStorage": "local-registry.registry.svc.cluster.local:5000/vsa"} {
+					task.Params = append(task.Params, pipeline.Param{Name: name, Value: pipeline.ParamValue{Type: pipeline.ParamTypeString, StringVal: value}})
+				}
+				for _, name := range []string{"VSA_GENERATED", "sourceDataArtifact"} {
+					pipelineObj.Spec.Results = append(pipelineObj.Spec.Results, pipeline.PipelineResult{Name: name, Value: pipeline.ResultValue{Type: pipeline.ParamTypeString, StringVal: "$(tasks.verify.results." + name + ")"}})
+				}
+			}
+		}
 		if task.TaskRef != nil && task.TaskRef.Resolver == "bundles" {
 			for j := range task.TaskRef.Params {
 				if task.TaskRef.Params[j].Name == "bundle" {
@@ -202,6 +222,30 @@ func createNamespace(ctx context.Context) (context.Context, error) {
 	ctx, _ = testenv.SetupState(ctx, &state)
 
 	logger.Log("Created namespace: %s", ns.Name)
+	// Private test inputs use a separate read-only credential. Publication
+	// credentials are never supplied to the acceptance job or its pods.
+	if authFile := os.Getenv("REGISTRY_AUTH_FILE"); authFile != "" {
+		auth, err := os.ReadFile(authFile)
+		if err != nil {
+			return ctx, err
+		}
+		_, err = client.CoreV1().Secrets(ns.Name).Create(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "registry-read", Annotations: map[string]string{"tekton.dev/docker-0": "https://quay.io"}},
+			Type:       corev1.SecretTypeDockerConfigJson,
+			Data:       map[string][]byte{corev1.DockerConfigJsonKey: auth},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			return ctx, err
+		}
+		_, err = client.CoreV1().ServiceAccounts(ns.Name).Create(ctx, &corev1.ServiceAccount{
+			ObjectMeta:       metav1.ObjectMeta{Name: "release-test"},
+			Secrets:          []corev1.ObjectReference{{Name: "registry-read"}},
+			ImagePullSecrets: []corev1.LocalObjectReference{{Name: "registry-read"}},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			return ctx, err
+		}
+	}
 
 	// Create RBAC for default service account to read EnterpriseContractPolicy
 	_, err = client.RbacV1().Roles(ns.Name).Create(ctx, &rbacv1.Role{
@@ -235,6 +279,7 @@ func createNamespace(ctx context.Context) (context.Context, error) {
 			Name:     "ec-policy-reader",
 		},
 		Subjects: []rbacv1.Subject{
+			{Kind: "ServiceAccount", Name: "release-test", Namespace: ns.Name},
 			{
 				Kind:      "ServiceAccount",
 				Name:      "default",
@@ -334,6 +379,17 @@ func createPolicy(ctx context.Context, content *godog.DocString) (context.Contex
 		return ctx, fmt.Errorf("parsing policy spec: %w", err)
 	}
 
+	release, err := testenv.LoadRelease()
+	if err != nil {
+		return ctx, err
+	}
+	if release != nil {
+		policySpec, err = release.PolicyConfig(testenv.RepoRoot(ctx), strings.Contains(content.Content, "@redhat_rpms"))
+		if err != nil {
+			return ctx, err
+		}
+	}
+
 	// Create EnterpriseContractPolicy CR
 	policyName := "test-policy"
 	policy := &unstructured.Unstructured{
@@ -395,6 +451,19 @@ func runPipeline(ctx context.Context, params *godog.Table) (context.Context, err
 		name := row.Cells[0].Value
 		value := row.Cells[1].Value
 
+		if name == "SNAPSHOT" {
+			release, err := testenv.LoadRelease()
+			if err != nil {
+				return ctx, err
+			}
+			if release != nil {
+				value, err = release.Snapshot(value)
+				if err != nil {
+					return ctx, err
+				}
+			}
+		}
+
 		// Expand variables
 		value = strings.ReplaceAll(value, "${NAMESPACE}", state.namespace)
 		value = strings.ReplaceAll(value, "${POLICY_NAME}", state.policyName)
@@ -415,11 +484,16 @@ func runPipeline(ctx context.Context, params *godog.Table) (context.Context, err
 	}
 
 	// Create PipelineRun
+	serviceAccount := "default"
+	if os.Getenv("REGISTRY_AUTH_FILE") != "" {
+		serviceAccount = "release-test"
+	}
 	pr, err := tektonClient.PipelineRuns(state.namespace).Create(ctx, &pipeline.PipelineRun{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "acceptance-",
 		},
 		Spec: pipeline.PipelineRunSpec{
+			TaskRunTemplate: pipeline.PipelineTaskRunTemplate{ServiceAccountName: serviceAccount},
 			PipelineRef: &pipeline.PipelineRef{
 				Name: pipelineObj.Name,
 			},
@@ -463,6 +537,33 @@ func runPipeline(ctx context.Context, params *godog.Table) (context.Context, err
 
 		completed = true
 		state.pipelineResult = pr.IsSuccessful()
+		if directory := os.Getenv("ACCEPTANCE_REPORT_DIR"); directory != "" {
+			if err := os.MkdirAll(directory, 0755); err != nil {
+				return ctx, err
+			}
+			raw, err := json.MarshalIndent(pr, "", "  ")
+			if err != nil {
+				return ctx, err
+			}
+			if err := os.WriteFile(filepath.Join(directory, state.namespace+"-"+pr.Name+".json"), raw, 0644); err != nil {
+				return ctx, err
+			}
+		}
+		for _, expected := range pipelineObj.Spec.Results {
+			if expected.Name != "VSA_GENERATED" && expected.Name != "sourceDataArtifact" {
+				continue
+			}
+			value := ""
+			for _, actual := range pr.Status.Results {
+				if actual.Name == expected.Name {
+					value = actual.Value.StringVal
+				}
+			}
+			if (expected.Name == "VSA_GENERATED" && value != "true") ||
+				(expected.Name == "sourceDataArtifact" && !strings.Contains(value, "@sha256:")) {
+				return ctx, fmt.Errorf("missing or invalid %s result: %q", expected.Name, value)
+			}
+		}
 
 		// Get TEST_OUTPUT result
 		for _, result := range pr.Status.Results {
@@ -534,7 +635,7 @@ func pipelineShouldSucceed(ctx context.Context) error {
 		return fmt.Errorf("pipeline failed, expected success. TEST_OUTPUT: %s", state.testOutput)
 	}
 
-	return nil
+	return validateTestOutput(state.testOutput)
 }
 
 func pipelineShouldFail(ctx context.Context) error {

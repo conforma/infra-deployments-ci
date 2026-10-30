@@ -1,290 +1,108 @@
 # Conforma release workflow
 
-The Conforma release is executed by GitHub Actions in [`.github/workflows/konflux-policy.yaml`](../.github/workflows/konflux-policy.yaml). Engineers use [`hack/generate-changelog.sh`](../hack/generate-changelog.sh) to prepare the release notes and image manifest for review; that local script does not perform the release or promote images. This guide covers preparation, review, workflow execution, and publication of policies, the CLI image, Tekton tasks, and catalog definitions.
+Prepare once, test the completed candidate, then publish it unchanged.
+`images.json` identifies the exact policies, CLI and final Task/StepAction bundle
+consumed by both acceptance and publication. The [annotated JSONC reference](RELEASE_WORKFLOW_V2_DESIGN.md#release-manifest)
+explains every field; generated manifests use standard JSON.
 
-## At a glance
+## Prepare and review
 
-```mermaid
-flowchart TD
-  A[Generate changelog and images.json] --> B[Review release proposal]
-  B --> C[Open PR with a new releases directory]
-  C --> D[Lead time check: new rules need 56 days]
-  D --> E[Merge to main]
-  E --> F[Acceptance tests and digest capture]
-  M[Manual workflow dispatch] --> F
-  F --> G[Promote policy and CLI tags]
-  G --> H[Extract tasks and update policy digest]
-  H --> I[Publish tekton-task bundle]
-  H --> J[Push task definitions to tekton-catalog konflux]
-```
+Dispatch [Prepare release](../.github/workflows/prepare-release.yaml) on `main`
+in `conforma/infra-deployments-ci`. The assembly job captures candidate digests,
+source bundles, test inputs and publication baselines. It pins execution images
+and Git StepAction commits, then builds the final bundle under a unique
+`candidate-*` retention tag. External StepActions must already pin their runtime
+images. Retain candidate tags for the lifetime of the release records.
 
-The normal path starts with preparing and reviewing a new directory under `releases/`, then merging it to `main`. That push starts the `konflux-policy` workflow, which runs the release. Engineers can also start the workflow manually against an existing release directory. Its scheduled trigger is currently commented out. There is no local command that performs the release publication steps.
+A separate job generates the changelog without publication credentials.
+Download its `release-pr-files` artifact and submit the timestamped directory
+under `releases/` in a PR. It contains `images.json` and `changelog.md`.
 
-## 1. Prepare release inputs locally
+Review image/source changes, policy rule changes, Golden image behavior, and
+Task/StepAction catalog diffs. The PR check validates the manifest, prepared
+execution references and retention tag. Newly introduced policy rules must have
+at least 56 days of lead time, measured against the recorded baseline. Require
+that check in branch protection.
 
-Run the generator from the repository root:
-
-```bash
-./hack/generate-changelog.sh
-```
-
-By default, the script creates a UTC timestamped directory such as `releases/2026-10-21T15:30:00/` containing:
-
-| File | Contents and use |
-|---|---|
-| `changelog.md` | Candidate image digests, source pull requests, policy rule changes, and policy behavior comparison. This is for human review. |
-| `images.json` | Candidate image digests and policy mirror destinations. The release workflow reads this file to select policy images for promotion. |
-
-You can provide an output directory explicitly:
+Local preparation needs Bash 4+, Git, jq, Mike Farah yq, crane and tkn. Changelog
+generation also needs gh, Go and a container engine:
 
 ```bash
-./hack/generate-changelog.sh releases/my-candidate
+./hack/prepare-release.sh /tmp/prepared-release
+./hack/generate-changelog.sh /tmp/prepared-release/images.json releases/<id>
+
+# Reproduce the changelog without selecting newer candidates:
+./hack/generate-changelog.sh releases/<id>/images.json
+./hack/check-release-inputs.sh releases/<id>/images.json
+bash hack/check-release-lead-time.sh releases/<id>/images.json
 ```
 
-The `-` argument writes the changelog to stdout and does not keep an `images.json` file:
-
-```bash
-./hack/generate-changelog.sh -
-```
-
-Use a new directory under `releases/` when preparing a release for the automatic push trigger. This is the local preparation step only: the generator does not commit files, open a PR, run the acceptance workflow, or publish images. The actual release starts when GitHub Actions runs `konflux-policy` after the release directory is merged, or when an engineer dispatches that workflow manually.
-
-### Local prerequisites
-
-Install Bash, Git, GitHub CLI (`gh`), Go, `crane`, `jq`, Mike Farah `yq`, and Docker or Podman. The container engine must be running and able to pull the target images from Quay. Docker is the default; select Podman with:
-
-```bash
-export CONTAINER_ENGINE=podman
-```
-
-Anonymous Quay pulls are normally sufficient. If registry authentication is required, set `REGISTRY_AUTH_FILE` to a Docker-compatible auth file. The helper mounts it read-only in the validation container. Set `REGISTRY_AUTH_DEST` if the container engine expects the file at another path. `gh` is used to look up source PR titles; a lookup failure leaves the PR number in the changelog with `(title unavailable)`.
-
-### What the generator compares
-
-The script records candidate digests for five Conforma images at `:latest`. It compares source revisions for `release-policy` and `cli`, and compares rule contents for all three policy images, using `:konflux` as the current release and `:latest` as the candidate:
-
-| Candidate image | Destination for a policy mirror tag |
-|---|---|
-| `quay.io/conforma/release-policy` | `quay.io/enterprise-contract/ec-release-policy` |
-| `quay.io/conforma/task-policy` | `quay.io/enterprise-contract/ec-task-policy` |
-| `quay.io/conforma/build-task-policy` | `quay.io/enterprise-contract/ec-build_task-policy` |
-| `quay.io/conforma/cli` | None listed in the release manifest. |
-| `quay.io/conforma/tekton-task` | None listed in the release manifest. |
-
-The changelog contains three kinds of information:
-
-1. **Images:** registry digests for the candidates.
-2. **Source changes:** merge commits and PR titles between the image revision annotations for `release-policy` and `cli`. The script clones `conforma/policy` and `conforma/cli` and compares their source revisions. It picks the linux/amd64 manifest for multi-architecture images. This is a merge-commit summary, not a full list of all commits.
-3. **Policy changes:** [`hack/policy-rule-diff`](../hack/policy-rule-diff/) compares each policy image and renders added and removed `deny` and `warn` rules, including descriptions, collections, effective dates, and documentation links.
-
-The generator resolves candidate `:latest` references more than once. The image list at the top of `changelog.md`, the source and policy comparisons, and the final `images.json` can therefore differ if a mutable tag moves while generation is running. Check that the reported digests agree before submitting the release.
-
-## 2. Review policy behavior changes
-
-The generator runs [`hack/policy-behavior/compare-policy-behavior.sh`](../hack/policy-behavior/compare-policy-behavior.sh) and appends its results to the changelog. It validates two target images against current and candidate releases, for four `ec validate image` runs total.
-
-| Input | Current release | Candidate release |
-|---|---|---|
-| CLI | `quay.io/conforma/cli:konflux` | CLI digest from the generated `images.json` |
-| Release policy | `quay.io/conforma/release-policy:konflux` | Release policy digest from `images.json` |
-| Targets | Golden container and Golden RPM, each resolved to an immutable digest | The same resolved target digests |
-| Effective time | One UTC timestamp | The same timestamp |
-
-[`targets.json`](../hack/policy-behavior/targets.json) defines the targets and collections: Golden container uses `@redhat`, and Golden RPM uses `@redhat_rpms`. The RPM comparison target is configured with an `on-pr-...calculation-x86_64` image tag; the acceptance scenarios use the RPM `:latest` tag.
-
-The helper renders [`golden-policy.yaml`](../hack/policy-behavior/golden-policy.yaml) with the release policy and target collection for each run. That template uses `oci::quay.io/redhat-konflux/policy-data:latest` as policy data, and validation uses [`acceptance/pub.key`](../acceptance/pub.key). The command uses `--strict=false`, `--show-warnings`, `--info`, `--ignore-rekor`, `--allow-past-effective-time`, `--effective-time`, `--timeout 30m`, and JSON output.
-
-The report compares violations and warnings per target. It identifies results by `metadata.code` when available and otherwise by message, deduplicating repeated results across image components. If a rule changes from warning to violation, the report shows both a removed warning and an added violation.
-
-Behavior differences are for reviewers and do not fail generation by themselves. Failed image pulls, invalid configuration, command failures, or malformed JSON reports do fail generation. The generator writes the release files before this comparison, so files may remain even if the command exits with an error. Treat the exit status and a complete behavior section as part of a successful generation.
-
-Review the candidate digests, source PRs, rule effective dates, behavior changes, and mirror destinations. Regenerate or investigate if a comparison fails or candidate digests disagree.
-
-## 3. Open a release PR
-
-Commit `changelog.md` and `images.json` together in one new release directory, then open a PR against `main` in `conforma/infra-deployments-ci`.
-
-The [`check-release-lead-time` workflow](../.github/workflows/check-release-lead-time.yaml) runs for PRs to `main` that change `releases/**`. It checks each added or modified release manifest using [`hack/check-release-lead-time.sh`](../hack/check-release-lead-time.sh). For each policy image, the helper compares the pinned candidate digest in `images.json` with the current `:konflux` image. Newly added rules must have an RFC3339 `effective_on` date at least **56 days after the check runs**. Existing rules are exempt. A new rule with a missing, malformed, or too-soon date fails the check.
-
-You can run the same check locally:
-
-```bash
-bash ./hack/check-release-lead-time.sh releases/<release-directory>/images.json
-```
-
-The generator does not run this check. The publication workflow does not repeat it. GitHub branch protection determines whether the check must pass before merge; the workflow definition alone does not establish that requirement. [`CODEOWNERS`](../.github/CODEOWNERS) assigns repository paths to `@conforma/devs`, but approval requirements are set separately.
-
-## 4. Merge and start publication
-
-The [`konflux-policy` workflow](../.github/workflows/konflux-policy.yaml) starts on either:
-
-- A push to `main` that changes files under `releases/**`.
-- A manual `workflow_dispatch` run with a release directory selected.
-
-For a push, it chooses the first newly added `releases/*/images.json` in the pushed commit range. For predictable selection, merge one new release directory per push. Changing an existing release directory or changing only `changelog.md` still matches the path trigger but does not add a new manifest, so the workflow fails with `No images.json found`. Use manual dispatch to rerun an existing release directory.
-
-The workflow has five jobs:
-
-| Job | Role |
-|---|---|
-| `acceptance-tests` | Reads the release manifest, captures tested image digests, and runs the acceptance suite. |
-| `tag` | Promotes policy digests and the CLI digest to `:konflux`. |
-| `update-task-definitions` | Extracts tasks from the captured task bundle, updates the policy digest, and uploads the resulting YAML files. |
-| `tekton-task-bundle` | Rebuilds the task bundle from the prepared YAML files and moves its `:konflux` tag. |
-| `tekton-catalog` | Pushes prepared task definitions to the catalog's `konflux` branch. |
-
-All publication jobs are restricted to the canonical `conforma/infra-deployments-ci` repository. The workflow's schedule is commented out with a release-freeze and `ITN-2026-00051` note.
-
-## 5. Acceptance tests and captured digests
-
-The `acceptance-tests` job reads `images.json`, installs Go, `crane`, `yq`, and Kind, runs [`hack/resolve-tested-digests.sh`](../hack/resolve-tested-digests.sh), then runs:
-
-```bash
-make acceptance
-```
-
-The resolver scans `acceptance/conforma*.yaml` for Tekton bundle references. It resolves the task bundle tag to a digest, reads the `verify-enterprise-contract` task from the bundle, and pins the CLI image referenced by its first step. The digest map is passed to downstream jobs.
-
-The acceptance suite creates a temporary Kind cluster with Tekton Pipelines, the EnterpriseContractPolicy CRD, and a local OCI registry. Four scenarios validate Golden container and Golden RPM inputs through both `verify-enterprise-contract` and `verify-conforma-konflux-ta`. The Trusted Artifacts scenarios prepare the input snapshot and publish it to the local registry. The tests check that the Tekton pipelines complete successfully with `STRICT=false`; they do not require that policy reports contain zero violations.
-
-**Digest limitation:** although the resolver captures bundle and CLI digests, the acceptance scenarios still refer to `quay.io/conforma/tekton-task:latest` and `quay.io/conforma/release-policy:latest`. The captured digest map is used for downstream promotion and task extraction, but it is not passed into those test scenarios. Therefore, successful acceptance tests do not prove that the exact candidate digests in the reviewed release manifest were tested. The acceptance policy data sources also differ from the local behavior comparison: scenarios use `git::github.com/release-engineering/rhtap-ec-policy//data` and `oci::quay.io/konflux-ci/tekton-catalog/data-acceptable-bundles:latest`.
-
-## 6. Promote policy and CLI images
-
-After acceptance succeeds, the `tag` job logs in to `quay.io/conforma` and `quay.io/enterprise-contract` using repository secrets. It uses `skopeo copy --all` to copy each policy digest in the release manifest to that image's Conforma `:konflux` tag and to any configured mirror `:konflux` tags.
-
-The same job promotes the CLI image digest extracted from the tested task bundle to the CLI repository's `:konflux` tag. It excludes the task bundle from this direct retagging. The `components` entries in `images.json` are not used to choose the CLI or task bundle promoted by this workflow.
-
-## 7. Rebuild and publish task definitions
-
-After acceptance and tagging, `update-task-definitions` uses the pinned task bundle digest from the acceptance job. [`hack/extract-all-bundle-tasks.sh`](../hack/extract-all-bundle-tasks.sh) extracts every task from the bundle, including tasks not covered by the current acceptance scenarios. Each task must have an `app.kubernetes.io/version` label. The output follows the catalog layout `tasks/<task-name>/<version>/<task-name>.yaml`.
-
-Next, [`hack/update-policy-digest.sh`](../hack/update-policy-digest.sh) resolves the current `quay.io/conforma/release-policy:konflux` digest and updates task YAML defaults named `POLICY_BUNDLE_DIGEST`. This is a fresh registry lookup. The workflow uploads the prepared files as the `task-definitions` artifact.
-
-Two jobs consume that artifact independently:
-
-| Job | Result |
-|---|---|
-| `tekton-task-bundle` | Uses `tkn bundle push` to publish `quay.io/conforma/tekton-task:run-<UTC-date>-<run-id>-<attempt>`, then moves `:konflux` to the same bundle. The unique run tag preserves the bundle digest. |
-| `tekton-catalog` | Copies task YAML into `conforma/tekton-catalog` and pushes a commit directly to its `konflux` branch. It does not open a PR. If no files changed, the job exits successfully without a commit. |
-
-The catalog job uses a GitHub App with write access to `tekton-catalog`. The commit message includes the workflow run URL. The bundle is rebuilt after acceptance to include the policy digest update; the rebuilt bundle is not tested again in this workflow. Catalog and bundle publication can succeed or fail independently.
-
-## 8. Manual dispatch, completion, and recovery
-
-The `konflux-policy` manual dispatch form has these inputs:
-
-| Input | Behavior |
-|---|---|
-| `release_dir` | Required. Accepts a directory name or a path beginning with `releases/`. |
-| `run_tag` | Promote policy and CLI tags. Defaults to `true`. |
-| `run_tekton_task_bundle` | Publish the rebuilt task bundle. Defaults to `true`. |
-| `run_tekton_catalog` | Publish task YAML to the catalog branch. Defaults to `true`. |
-
-Set all three switches to false to run acceptance only. If `run_tag` is false while either publication switch is true, task preparation can still run after acceptance; it uses the existing `release-policy:konflux` digest when updating task definitions. A manual run using an old manifest does not recreate a complete historical release: it resolves the current task bundle again.
-
-For a full release, check the workflow run and Quay/catalog results:
-
-- Acceptance tests, tagging, task preparation, bundle publication, and catalog publication completed successfully (or the catalog job reported no changes).
-- Policy `:konflux` and mirror tags point to the manifest digests.
-- CLI `:konflux` matches the CLI digest reported by the resolver.
-- Task bundle `:konflux` points to the unique `run-...` tag for the run; the bundle includes the intended policy digest defaults.
-- The catalog `konflux` branch contains the prepared task definitions.
-- Keep the release PR, release directory, and workflow run URL as the release record.
-
-The workflow does not provide transactional rollback or a release-wide concurrency guard. A later job can fail after earlier image tags have moved. Inspect which jobs completed and the current destination tags before retrying selected jobs. A catalog failure does not undo a successfully published task bundle. See the rollback procedure below before moving tags manually.
-
-## 9. Roll back to a previous release
-
-Rollback is a manual registry operation: find a previous release that was fully published, then move its image tags back to the recorded image digests. Do not dispatch `konflux-policy` with an old `release_dir` as a rollback. A dispatch reruns acceptance and resolves the current task bundle; it does not replay the old published artifacts.
-
-### Find the target release and its run
-
-Start with the previous release directory: its `images.json` is the source of the policy digests to restore, and it records candidate component digests. The associated workflow run is needed to confirm that publication actually completed and to recover the final rebuilt task-bundle tag and digest, which are not recorded in `images.json`.
-
-1. Choose the previous release you want to restore, for example `releases/2026-09-10T17:30:44/`, and inspect its manifest:
-
-   ```bash
-   RELEASE_DIR='releases/2026-09-10T17:30:44'
-   jq -r '.policy[] | "\(.image)@\(.digest)"' "$RELEASE_DIR/images.json"
-   jq -r '.components[] | "\(.image)@\(.digest)"' "$RELEASE_DIR/images.json"
-   ```
-
-2. List the workflow runs and identify the run whose log says it used that release directory:
-
-   ```bash
-   gh run list --repo conforma/infra-deployments-ci \
-     --workflow konflux-policy.yaml
-   RUN_ID='<run-id>' # Replace with the ID from the run list.
-   gh run view "$RUN_ID" --repo conforma/infra-deployments-ci --json conclusion,jobs,url
-   gh run view "$RUN_ID" --repo conforma/infra-deployments-ci --log
-   ```
-
-3. Confirm the selected run successfully completed the `tag` job. This verifies the policy digests from `images.json` were promoted. If restoring the CLI, use the digest resolved from the tested task bundle in this run's logs; the manifest's CLI component digest is a candidate and is not the input used by the tag job. If restoring the task bundle, also confirm `update-task-definitions` and `tekton-task-bundle` succeeded, then use the run-specific bundle tag from its logs. The run log identifies the input file with a line such as `Using releases/<release>/images.json`.
-
-If a later run or manual dispatch has changed any of the tags since that release, use the most recent successful run that produced the version you intend to restore. Check the per-job results and dispatch options; a successful overall run is not enough if a publication job was skipped.
-
-### Recover the image references
-
-The previous release's `images.json` records the exact digests used by the `tag` job for the three policy images. Its `policy` entries also list the mirror repositories. You do not need the workflow run to discover these policy digests; use the run to verify the `tag` job completed and copied them:
-
-```bash
-RELEASE_DIR='releases/<release-directory>'
-jq -r '.policy[] | "\(.image)@\(.digest) mirrors=\(.mirrors | join(", "))"' \
-  "$RELEASE_DIR/images.json"
-```
-
-For each policy entry, use its `image@digest` as the copy source for both the Conforma `:konflux` tag and every mirror `:konflux` tag. The workflow's `tag` job log confirms which copies completed.
-
-For the CLI, take the digest from that run's successful `tag` job, in the `Tag tested images by digest` step. The `components` entry for `quay.io/conforma/cli` in `images.json` is a generated candidate digest; the workflow promotes the CLI digest extracted from the tested task bundle, so confirm the run log before using the manifest value.
-
-For the task bundle, use the unique `run-<UTC-date>-<run-id>-<attempt>` tag printed by the successful `tekton-task-bundle` job. Check that the tag still exists in Quay and resolves to the expected digest before retagging. The `components` entry for `quay.io/conforma/tekton-task` records the bundle used as input to the workflow; the workflow rebuilds the bundle after updating task defaults, so that digest is not the published bundle digest.
-
-The release directory plus successful run logs therefore identify the promoted images as follows:
-
-| Image | Recovery source |
-|---|---|
-| Release, task, and build-task policy images | Previous release's `images.json` `policy` entries; check the successful run's `tag` logs. |
-| CLI | Successful run's `tag` job log, `Tag tested images by digest`. |
-| Rebuilt Tekton task bundle | Successful run's `tekton-task-bundle` log and its `run-...` tag. |
-
-### Move the tags and verify
-
-For policy images and mirrors, authenticate to the relevant Quay repositories and copy from the recorded digest, preserving all architectures:
-
-```bash
-IMAGE=quay.io/conforma/release-policy
-DIGEST='sha256:<digest-from-the-previous-release-images-json>'
-MIRROR=quay.io/enterprise-contract/ec-release-policy
-
-skopeo copy --all "docker://${IMAGE}@${DIGEST}" "docker://${IMAGE}:konflux"
-skopeo copy --all "docker://${IMAGE}@${DIGEST}" "docker://${MIRROR}:konflux"
-```
-
-Repeat for every policy entry and mirror in the selected release manifest. For the CLI, use the digest confirmed in the successful run log:
-
-```bash
-CLI_DIGEST='sha256:<digest-from-the-successful-tag-job-log>'
-skopeo copy --all "docker://quay.io/conforma/cli@${CLI_DIGEST}" \
-  docker://quay.io/conforma/cli:konflux
-```
-
-For the task bundle, move `:konflux` back to the run tag from the selected successful release:
-
-```bash
-BUNDLE_TAG='run-<UTC-date>-<run-id>-<attempt>' # Replace with the value from the workflow log.
-crane digest "quay.io/conforma/tekton-task:${BUNDLE_TAG}"
-crane tag "quay.io/conforma/tekton-task:${BUNDLE_TAG}" konflux
-```
-
-After retagging, run `crane digest` on each `:konflux` tag and mirror and compare the result with the selected release digest or the verified run log. Record the rollback operator, time, target release directory, and workflow run in the incident or change record. Rolling back the registry tags does not revert task definitions already pushed to the `tekton-catalog` `konflux` branch; that branch needs a separate change if task definitions must also be restored.
-
-### Retention limitation
-
-`images.json` is generated before publication. It records the policy digests and candidate component digests, but the workflow does not write its actual promoted CLI and rebuilt task-bundle digests back into the release directory. Run logs and the task bundle's `run-...` tag provide that information today, but those tags can later be removed by registry cleanup. For a rollback that can be performed from the previous release directory alone, the workflow would need to persist a post-publication record such as `published-images.json` containing every actual destination reference and digest, including the rebuilt task bundle.
-
-## Separate infra-deployments update
-
-The [`create-pr` workflow](../.github/workflows/create-pr.yaml) is a separate maintenance flow. It runs manually or on Fridays at 10:00 UTC. It checks out `infra-deployments`, `conforma/cli`, `conforma/crds`, and `conforma/config`, runs each source repository's update helper, then uses [`hack/create-pr.sh`](../hack/create-pr.sh) to propose changes to `infra-deployments` on the `ec-batch-update` branch. It does not read the release directory and is not called by `konflux-policy`.
-
-This workflow proposes an infra-deployments change; it does not deploy it. The CLI helper resolves the task bundle's current `:latest` tag, while the config helper regenerates policy configuration from the config repository. This is not guaranteed to select the exact images listed in a release manifest. The `konflux-policy` workflow itself ends with image tags and catalog branch updates; it does not create a GitHub Release, send release announcements, or verify rollout to production clusters.
+Preparation requires Conforma registry write access. `configCommit` must be
+available locally and configuration changes must be committed. Changelog
+comparison uses the captured targets, OCI policy data, configuration and one
+recorded evaluation time for both baseline and candidate. Behavior differences
+are informational; operational failures fail generation.
+
+## Acceptance
+
+Merging the PR triggers [konflux-policy](../.github/workflows/konflux-policy.yaml).
+A push must contain exactly one added or modified release manifest. Manual
+dispatch on `main` can select a release directory explicitly.
+
+The job checks out `configCommit` and runs the existing Go acceptance suite with
+`RELEASE_IMAGES` pointing to the committed manifest and `RELEASE_CATALOG` to
+files extracted from its final bundle. No test source files are rewritten.
+It uses no publication credentials and covers:
+
+- Golden container and RPM through both verification Tasks, using manifest pins.
+- Valid, populated `TEST_OUTPUT`, plus the Trusted Artifacts VSA archival path.
+- Missing, disabled and enabled keyless configuration in the auxiliary Task.
+- Successful and failed registry operations in the attestation StepAction.
+- Positive and negative inputs for task-policy and build-task-policy rules.
+
+Auxiliary script tests use the actual runtime images and stub external commands.
+Adding a released resource requires an explicit test case. Acceptance captures
+one fresh evaluation time per run and uploads reports and logs. `STRICT=false`
+keeps policy findings reviewable; operational failures still fail acceptance.
+
+For local reproduction, check out the recorded configuration, extract the final
+bundle with `extract-bundle-resources.sh` (both `task tasks` and
+`stepaction stepactions`), then run `make acceptance` with absolute paths in
+`RELEASE_IMAGES` and `RELEASE_CATALOG`. Install Kind and Kustomize as well as the
+tools above. With Podman on macOS, set `KIND_EXPERIMENTAL_PROVIDER=podman`.
+
+Private test inputs need the `REGISTRY_READ_AUTH_JSON` secret: a Docker config
+JSON containing read-only credentials. Acceptance mounts it through a dedicated
+test service account. The configured Golden RPM repository requires access.
+Locally, set `REGISTRY_AUTH_FILE` to a read-only Docker config and `DOCKER_CONFIG`
+to its directory (the file must be named `config.json`).
+
+## Publication and retries
+
+Publication depends on successful acceptance and reads the same committed
+manifest. The workflow is serialized and cannot cancel an active publication.
+It promotes eight `:konflux` tags: three Conforma policies, their three
+enterprise-contract mirrors, the CLI, and the final Task bundle. It also copies
+exact bundle files to `conforma/tekton-catalog` branch `konflux`.
+
+Before any write, it checks every destination against the candidate and recorded
+baseline. Candidate content is skipped; baseline content is updated; anything
+else or a read failure stops publication. Image copies preserve digests. Catalog
+updates preserve unrelated files and older versions and never force push.
+Final verification and the publication log show the resulting digests and
+catalog commit.
+
+Registry and Git updates are not atomic. Rerun a failed workflow or manually
+dispatch the same release to finish partial publication. Already-applied content
+is skipped, including after a lost Git push acknowledgement. A conflict requires
+inspection and a new reviewed manifest; do not edit a historical release record.
+A deliberate rollback also needs a new manifest with current baselines and
+retained historical candidates, followed by normal acceptance.
+
+Preparation uses `BUNDLE_PUSH_USER_CONFORMA` / `BUNDLE_PUSH_PASS_CONFORMA`.
+Publication additionally uses the corresponding `_EC` pair and
+`EC_AUTOMATION_APP_ID` / `EC_AUTOMATION_KEY` for catalog writes. Other automation
+must not independently write these release destinations.
+
+The separate [infra-deployments PR workflow](../.github/workflows/create-pr.yaml)
+is unchanged. This release ends at registry tags and catalog updates.

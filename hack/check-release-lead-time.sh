@@ -40,12 +40,19 @@ for images_file in "$@"; do
         exit 1
     fi
 
+    if [[ $(jq -r '.schemaVersion // 1' "$images_file") == 2 ]]; then
+        "${SCRIPT_DIR}/check-release-inputs.sh" "$images_file"
+    fi
     echo "Checking new policy rules in $images_file"
     image_rows=$(jq -r '.policy[] | [.image, .digest] | @tsv' "$images_file")
     while IFS=$'\t' read -r image digest; do
         echo "  ${image}@${digest}"
+        baseline="${image}:konflux"
+        if [[ $(jq -r '.schemaVersion // 1' "$images_file") == 2 ]]; then
+            baseline="${image}@$(jq -er --arg ref "${image}:konflux" '.baseline.images[] | select(.reference == $ref) | .digest' "$images_file")"
+        fi
         (cd "${SCRIPT_DIR}/policy-rule-diff" && go run . \
             -bundle -min-effective-lead-days 56 \
-            "${image}:konflux" "${image}@${digest}" >/dev/null)
+            "$baseline" "${image}@${digest}" >/dev/null)
     done <<< "$image_rows"
 done
