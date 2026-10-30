@@ -83,7 +83,7 @@ class PublicationTests(unittest.TestCase):
                         target = args[-1].removeprefix('docker://')
                         state[target] = D
                         copies.append(target)
-                    return 'https://github.com/conforma/tekton-catalog.git'
+                    return 'https://github.com/conforma/tekton-catalog.git' if args[:3] == ('git', 'remote', 'get-url') else ''
                 result = Path(folder) / 'result.json'
                 with patch('release.publish.Registry') as registry, patch('release.publish.run', side_effect=command), patch('release.publish.fetch_catalog', return_value='head'), patch('release.publish.catalog_actions', return_value={'file': 'skip'}), patch('release.publish.update_catalog', return_value='head'):
                     registry.return_value.digest.side_effect = lambda r: state[r]

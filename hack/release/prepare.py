@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import tempfile
 import uuid
+from urllib.parse import parse_qs
 
 import yaml
 
@@ -20,6 +21,31 @@ def now():
 def entry(reference):
     image, digest = reference.split('@')
     return {'image': repository(image), 'digest': digest}
+
+
+def pin_data(sources, registry, work):
+    result, commits = [], {}
+    for source in sources:
+        if source.startswith('oci::'):
+            result.append('oci::' + registry.pin(source[5:]))
+            continue
+        require(source.startswith('git::'), 'Policy data must use an OCI or Git source')
+        value, _, query = source[5:].removeprefix('https://').partition('?')
+        repo, separator, path = value.partition('//')
+        require(separator and path and all(p not in ('', '.', '..') for p in path.split('/')), 'Git data requires a safe directory path')
+        require(re.fullmatch(r'[A-Za-z0-9.-]+/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo), 'Unsupported Git data repository')
+        params = parse_qs(query, strict_parsing=True)
+        require(set(params) <= {'ref'} and len(params.get('ref', ['HEAD'])) == 1, 'Unsupported Git data query')
+        revision = params.get('ref', ['HEAD'])[0]
+        require(not revision.startswith('-'), 'Invalid Git data revision')
+        key = (repo, revision)
+        if key not in commits:
+            folder = Path(work) / ('data-' + uuid.uuid4().hex)
+            run('git', 'init', '--bare', folder)
+            run('git', 'fetch', '--depth=1', 'https://' + repo, revision, cwd=folder)
+            commits[key] = run('git', 'rev-parse', 'FETCH_HEAD', cwd=folder)
+        result.append(f'git::{repo}//{path}?ref={commits[key]}')
+    return result
 
 
 def snapshot(commit, directory):
@@ -152,10 +178,7 @@ def prepare(output):
         targets = [dict(entry(registry.pin(t['image'])), name=t['name']) for t in targets]
         template = yaml.safe_load((Path(work) / 'hack/policy-behavior/golden-policy.yaml').read_text())
         data = template['spec']['sources'][0]['data']
-        # The current configuration uses OCI data. Reject unsupported mutable
-        # sources rather than silently carrying them into a release.
-        require(all(d.startswith('oci::') for d in data), 'Preparation currently requires OCI policy data sources')
-        data = ['oci::' + registry.pin(d[5:]) for d in data]
+        data = pin_data(data, registry, work)
         baseline = [{'reference': repo + ':konflux', 'digest': registry.digest(repo + ':konflux')}
                     for repo in [*POLICIES, *POLICIES.values(), CLI, BUNDLE]]
         base = run('git', 'ls-remote', 'https://github.com/conforma/tekton-catalog.git', 'refs/heads/konflux').split()[0]

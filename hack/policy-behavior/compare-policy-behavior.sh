@@ -219,7 +219,10 @@ resolve_digest() {
 image_repository() {
     local image="$1"
     image="${image%@*}"
-    printf '%s\n' "${image%:*}"
+    if [[ "${image##*/}" == *:* ]]; then
+        image="${image%:*}"
+    fi
+    printf '%s\n' "$image"
 }
 
 render_policy() {

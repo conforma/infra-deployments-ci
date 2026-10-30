@@ -3,6 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+from datetime import datetime
 
 import jsonschema
 
@@ -57,6 +58,9 @@ def validate(manifest):
     require(len(baselines(manifest)) == len(manifest['baseline']['images']), 'Duplicate baseline')
     require(set(baselines(manifest)) == set(destinations(manifest)), 'Baseline must cover all eight destinations')
     targets = manifest['inputs']['testInputs']['targets']
+    timestamp = manifest['inputs']['testInputs']['comparisonTime']
+    require(re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})', timestamp), 'Comparison time must be RFC3339 with a timezone')
+    datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
     require(len(targets) == 2 and {t['name'] for t in targets} == {'golden-container', 'golden-rpm'}, 'Expected both Golden targets exactly once')
     dependencies = manifest['inputs'].get('dependencyBundles', [])
     require(len({ref(e) for e in dependencies}) == len(dependencies), 'Duplicate dependency bundle')

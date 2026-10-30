@@ -49,6 +49,7 @@ class ContractTests(unittest.TestCase):
             lambda m: m['components'].append(m['components'][0]),
             lambda m: m['policy'][0].update(mirrors=['quay.io/other/repo']),
             lambda m: m['inputs']['testInputs'].update(configCommit='main'),
+            lambda m: m['inputs']['testInputs'].update(comparisonTime='2026-10-30'),
             lambda m: m['components'][1].pop('retentionTag'),
             lambda m: m.update(unexpected=True),
         ):

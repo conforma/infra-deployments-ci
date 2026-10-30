@@ -37,7 +37,10 @@ def catalog_changelog(manifest):
     resources = Registry().resources(ref(candidates(manifest)[BUNDLE]))
     print('\n## Task and StepAction definitions\n')
     for key in ('sourceTaskBundle', 'stepActionsBundle'):
-        print(f'- {key}: `{ref(manifest["inputs"][key])}`')
+        reference = ref(manifest['inputs'][key])
+        annotations = json.loads(run('crane', 'manifest', reference)).get('annotations', {})
+        revision = annotations.get('org.opencontainers.image.revision', 'not annotated')
+        print(f'- {key}: `{reference}`; source revision: `{revision}`')
     for dep in manifest['inputs'].get('dependencyBundles', []):
         print(f'- Prepared dependency: `{ref(dep)}`')
     print('\nThe following diffs include execution reference and policy-default changes.\n')

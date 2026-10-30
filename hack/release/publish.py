@@ -70,6 +70,7 @@ def publish(manifest, manifest_path, evidence_path, catalog, result_path):
     try:
         resources = registry.resources(ref(candidates(manifest)[BUNDLE]))
         require(run('git', 'remote', 'get-url', 'origin', cwd=catalog).removesuffix('.git') == 'https://github.com/conforma/tekton-catalog', 'Unexpected catalog remote')
+        require(not run('git', 'status', '--porcelain', cwd=catalog), 'Catalog checkout must be clean')
         run('git', 'fetch', 'origin', manifest['catalog']['baseCommit'], cwd=catalog)
         head = fetch_catalog(catalog, manifest['catalog']['branch'])
         # Preflight every destination before any externally visible mutation.

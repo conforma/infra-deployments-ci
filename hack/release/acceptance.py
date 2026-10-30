@@ -1,5 +1,6 @@
 """Run acceptance against the manifest, retaining evidence for publication."""
 import json
+import copy
 import os
 from pathlib import Path
 import re
@@ -21,6 +22,9 @@ def render(manifest, directory, timestamp):
     entries = candidates(manifest)
     inputs = manifest['inputs']['testInputs']
     targets = {t['name']: ref(t) for t in inputs['targets']}
+    collections = {t['name']: t['collection'] for t in json.loads(
+        (root / 'hack/policy-behavior/targets.json').read_text())['targets']}
+    template = yaml.safe_load((root / 'hack/policy-behavior/golden-policy.yaml').read_text())['spec']
     # Feature files remain the ordinary, reviewed test cases. Substitute only
     # release inputs; preserve their assertions and scenario structure.
     for feature in (root / 'features').glob('*.feature'):
@@ -29,10 +33,15 @@ def render(manifest, directory, timestamp):
                          ("quay.io/redhat-user-workloads/rhtap-contract-tenant/golden-rpm/golden-rpm:latest", targets['golden-rpm'])):
             content = content.replace(old, new)
         def policy(match):
-            obj = json.loads(match.group(1))
+            original = json.loads(match.group(1))
+            includes = original['sources'][0]['config']['include']
+            require(includes in (['@redhat'], ['@redhat_rpms']), 'Add a target mapping for this acceptance scenario')
+            target = 'golden-rpm' if includes == ['@redhat_rpms'] else 'golden-container'
+            obj = copy.deepcopy(template)
             for source in obj['sources']:
                 source['policy'] = ['oci::' + ref(entries['quay.io/conforma/release-policy'])]
                 source['data'] = inputs['policyData']
+                source.setdefault('config', {})['include'] = [collections[target]]
             return '"""\n' + json.dumps(obj, indent=2) + '\n      """'
         content = re.sub(r'"""\s*(\{.*?\})\s*"""', policy, content, flags=re.S)
         require(':latest' not in content, f'Unpinned acceptance feature: {feature}')

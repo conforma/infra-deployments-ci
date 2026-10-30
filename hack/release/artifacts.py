@@ -43,6 +43,7 @@ class Registry:
         require(immutable(reference), f'Bundle must be pinned: {reference}')
         manifest = json.loads(run('crane', 'manifest', reference))
         resources = {}
+        identities = set()
         for layer in manifest['layers']:
             annotations = layer.get('annotations', {})
             kind = annotations.get('dev.tekton.image.kind')
@@ -56,6 +57,9 @@ class Registry:
                 raw = archive.extractfile(files[0]).read()
             obj = yaml.safe_load(raw)
             path = resource_path(obj)
+            identity = (obj['kind'], obj['metadata']['name'])
+            require(identity not in identities, f'Duplicate resource identity: {identity}')
+            identities.add(identity)
             require(obj['kind'].lower() == kind and obj['metadata']['name'] == annotations.get('dev.tekton.image.name'), 'Layer metadata disagrees with resource')
             require(path not in resources, f'Duplicate bundle resource: {path}')
             resources[path] = raw

@@ -291,7 +291,7 @@ fi
 
 echo "" >&2
 
-if [[ "$RELEASE_DIR" != "-" && "${RELEASE_DIR}/images.json" != "$CANDIDATE_IMAGES_FILE" ]]; then
+if [[ "$RELEASE_DIR" != "-" && ! "${RELEASE_DIR}/images.json" -ef "$CANDIDATE_IMAGES_FILE" ]]; then
     cp "$CANDIDATE_IMAGES_FILE" "${RELEASE_DIR}/images.json"
 fi
 
