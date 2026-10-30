@@ -86,5 +86,5 @@ def git_file(repo, commit, path):
     entry = run('git', 'ls-tree', commit, '--', path, cwd=repo)
     if not entry:
         return None
-    require(entry.split()[0] == '100644', f'Catalog path is not a regular file: {path}')
+    require(entry.split()[0] in ('100644', '100755'), f'Git path is not a regular file: {path}')
     return run('git', 'show', f'{commit}:{path}', cwd=repo, binary=True)

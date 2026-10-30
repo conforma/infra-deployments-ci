@@ -25,13 +25,15 @@ def entry(reference):
 def snapshot(commit, directory):
     require(re.fullmatch(COMMIT, commit), 'Configuration commit must be a full commit ID')
     paths = run('git', 'ls-tree', '-r', '--name-only', commit, '--',
-                'acceptance', 'features', 'hack/policy-behavior', 'hack/release/fixtures', cwd=ROOT).splitlines()
+                'acceptance', 'features', 'hack', cwd=ROOT).splitlines()
     require(paths, 'Missing test configuration')
     for path in paths:
         raw = git_file(ROOT, commit, path)
         target = Path(directory) / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(raw)
+        if path.endswith('.sh'):
+            target.chmod(0o755)
 
 
 class Preparer:
@@ -39,6 +41,8 @@ class Preparer:
         self.registry, self.cli, self.policy = registry, cli, policy
         self.tag, self.work = tag, Path(work)
         self.dependencies, self.resolved, self.visiting = [], {}, set()
+        self.remote_specs = {}
+        self.git_sources = {}
 
     def build(self, resources, suffix=''):
         folder = self.work / ('bundle' + suffix)
@@ -59,10 +63,15 @@ class Preparer:
         require(set(params) >= {'url', 'revision', 'pathInRepo'}, 'Git StepAction requires URL, revision, and path')
         url = params['url']
         require(url.startswith('https://') and '$(' not in url, 'Expected static HTTPS Git URL')
-        folder = self.work / ('git-' + str(len(self.resolved)))
-        run('git', 'init', '--bare', folder)
-        run('git', 'fetch', '--depth=1', url, params['revision'], cwd=folder)
-        commit = run('git', 'rev-parse', 'FETCH_HEAD', cwd=folder)
+        key = (url, params['revision'])
+        if key not in self.git_sources:
+            folder = self.work / ('git-' + uuid.uuid4().hex)
+            run('git', 'init', '--bare', folder)
+            require(not params['revision'].startswith('-'), 'Invalid Git revision')
+            run('git', 'fetch', '--depth=1', url, params['revision'], cwd=folder)
+            commit = run('git', 'rev-parse', 'FETCH_HEAD', cwd=folder)
+            self.git_sources[key] = (folder, commit)
+        folder, commit = self.git_sources[key]
         raw = git_file(folder, commit, params['pathInRepo'])
         require(raw is not None, 'Missing remote StepAction')
         params['revision'] = commit
@@ -89,7 +98,10 @@ class Preparer:
             raise ValueError(f'Unsupported StepAction resolver: {resolver}')
         require(obj['kind'] == 'StepAction', 'Remote ref must select a StepAction')
         prepared = self.definition(copy.deepcopy(obj))
+        self.remote_specs[key] = prepared['spec']
         if prepared != obj:
+            prepared.setdefault('metadata', {}).setdefault('labels', {}).setdefault(
+                'app.kubernetes.io/version', self.tag)
             dep = self.build({resource_path(prepared): yaml.safe_dump(prepared, sort_keys=False).encode()},
                              '-dep-' + str(len(self.dependencies)))
             self.dependencies.append(dep)
@@ -113,7 +125,15 @@ class Preparer:
                 require('$(' not in step['image'], 'Parameterized execution image cannot be frozen')
                 step['image'] = self.cli if repository(step['image']) == CLI else self.registry.pin(step['image'])
             if 'ref' in step:
+                key = json.dumps(step['ref'], sort_keys=True)
                 step['ref'] = self.remote(step['ref'])
+                # Pass the Task's existing registry transport option through
+                # to StepActions that expose the matching input.
+                if any(p['name'] == 'ORAS_OPTIONS' for p in spec.get('params', [])) and any(
+                        p['name'] == 'orasOptions' for p in self.remote_specs[key].get('params', [])):
+                    params = step.setdefault('params', [])
+                    if not any(p['name'] == 'orasOptions' for p in params):
+                        params.append({'name': 'orasOptions', 'value': '$(params.ORAS_OPTIONS)'})
         return obj
 
 

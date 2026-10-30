@@ -8,6 +8,7 @@ from .manifest import BUNDLE, candidates, load, ref
 from .prepare import prepare
 from .config import materialize, catalog_changelog
 from .publish import publish
+from .acceptance import acceptance
 
 
 def main():
@@ -26,6 +27,9 @@ def main():
     publication = commands.add_parser('publish')
     for arg in ('manifest', 'evidence', 'catalog', 'result'):
         publication.add_argument(arg)
+    tests = commands.add_parser('acceptance')
+    tests.add_argument('manifest')
+    tests.add_argument('output')
     args = parser.parse_args()
     if args.command == 'prepare':
         prepare(args.output)
@@ -41,6 +45,8 @@ def main():
         catalog_changelog(manifest)
     elif args.command == 'publish':
         publish(manifest, args.manifest, args.evidence, args.catalog, args.result)
+    elif args.command == 'acceptance':
+        acceptance(manifest, args.manifest, args.output)
 
 
 if __name__ == '__main__':

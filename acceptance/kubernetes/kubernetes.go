@@ -463,6 +463,33 @@ func runPipeline(ctx context.Context, params *godog.Table) (context.Context, err
 
 		completed = true
 		state.pipelineResult = pr.IsSuccessful()
+		if directory := os.Getenv("ACCEPTANCE_REPORT_DIR"); directory != "" {
+			if err := os.MkdirAll(directory, 0755); err != nil {
+				return ctx, err
+			}
+			raw, err := json.MarshalIndent(pr, "", "  ")
+			if err != nil {
+				return ctx, err
+			}
+			if err := os.WriteFile(filepath.Join(directory, state.namespace+"-"+pr.Name+".json"), raw, 0644); err != nil {
+				return ctx, err
+			}
+		}
+		for _, expected := range pipelineObj.Spec.Results {
+			if expected.Name != "VSA_GENERATED" && expected.Name != "sourceDataArtifact" {
+				continue
+			}
+			value := ""
+			for _, actual := range pr.Status.Results {
+				if actual.Name == expected.Name {
+					value = actual.Value.StringVal
+				}
+			}
+			if (expected.Name == "VSA_GENERATED" && value != "true") ||
+				(expected.Name == "sourceDataArtifact" && !strings.Contains(value, "@sha256:")) {
+				return ctx, fmt.Errorf("missing or invalid %s result: %q", expected.Name, value)
+			}
+		}
 
 		// Get TEST_OUTPUT result
 		for _, result := range pr.Status.Results {
@@ -534,7 +561,7 @@ func pipelineShouldSucceed(ctx context.Context) error {
 		return fmt.Errorf("pipeline failed, expected success. TEST_OUTPUT: %s", state.testOutput)
 	}
 
-	return nil
+	return validateTestOutput(state.testOutput)
 }
 
 func pipelineShouldFail(ctx context.Context) error {
