@@ -202,6 +202,30 @@ func createNamespace(ctx context.Context) (context.Context, error) {
 	ctx, _ = testenv.SetupState(ctx, &state)
 
 	logger.Log("Created namespace: %s", ns.Name)
+	// Private test inputs use a separate read-only credential. Publication
+	// credentials are never supplied to the acceptance job or its pods.
+	if authFile := os.Getenv("REGISTRY_AUTH_FILE"); authFile != "" {
+		auth, err := os.ReadFile(authFile)
+		if err != nil {
+			return ctx, err
+		}
+		_, err = client.CoreV1().Secrets(ns.Name).Create(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "registry-read", Annotations: map[string]string{"tekton.dev/docker-0": "https://quay.io"}},
+			Type:       corev1.SecretTypeDockerConfigJson,
+			Data:       map[string][]byte{corev1.DockerConfigJsonKey: auth},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			return ctx, err
+		}
+		_, err = client.CoreV1().ServiceAccounts(ns.Name).Create(ctx, &corev1.ServiceAccount{
+			ObjectMeta:       metav1.ObjectMeta{Name: "release-test"},
+			Secrets:          []corev1.ObjectReference{{Name: "registry-read"}},
+			ImagePullSecrets: []corev1.LocalObjectReference{{Name: "registry-read"}},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			return ctx, err
+		}
+	}
 
 	// Create RBAC for default service account to read EnterpriseContractPolicy
 	_, err = client.RbacV1().Roles(ns.Name).Create(ctx, &rbacv1.Role{
@@ -235,6 +259,7 @@ func createNamespace(ctx context.Context) (context.Context, error) {
 			Name:     "ec-policy-reader",
 		},
 		Subjects: []rbacv1.Subject{
+			{Kind: "ServiceAccount", Name: "release-test", Namespace: ns.Name},
 			{
 				Kind:      "ServiceAccount",
 				Name:      "default",
@@ -415,11 +440,16 @@ func runPipeline(ctx context.Context, params *godog.Table) (context.Context, err
 	}
 
 	// Create PipelineRun
+	serviceAccount := "default"
+	if os.Getenv("REGISTRY_AUTH_FILE") != "" {
+		serviceAccount = "release-test"
+	}
 	pr, err := tektonClient.PipelineRuns(state.namespace).Create(ctx, &pipeline.PipelineRun{
 		ObjectMeta: metav1.ObjectMeta{
 			GenerateName: "acceptance-",
 		},
 		Spec: pipeline.PipelineRunSpec{
+			TaskRunTemplate: pipeline.PipelineTaskRunTemplate{ServiceAccountName: serviceAccount},
 			PipelineRef: &pipeline.PipelineRef{
 				Name: pipelineObj.Name,
 			},

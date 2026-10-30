@@ -19,10 +19,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
-        with:
-          go-version-file: hack/policy-rule-diff/go.mod
-          cache-dependency-path: hack/policy-rule-diff/go.mod
+      - uses: ./.github/actions/release-tools
 
       - name: Check submitted releases
         env:
@@ -37,5 +34,6 @@ jobs:
             exit 0
           fi
           while IFS= read -r release_dir; do
+            ./hack/release.sh check "$release_dir/images.json"
             bash ./hack/check-release-lead-time.sh "$release_dir/images.json"
           done <<< "$release_dirs"

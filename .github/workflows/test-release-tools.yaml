@@ -1,0 +1,29 @@
+name: Test release tools
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'hack/**'
+      - 'spec/**'
+      - 'acceptance/**'
+      - 'docs/release-manifest.schema.json'
+      - '.github/actions/release-tools/**'
+      - '.github/workflows/*release*'
+      - '.github/workflows/konflux-policy.yaml'
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: ./.github/actions/release-tools
+      - run: PYTHONPATH=hack python3 -m unittest discover -s hack/release -t hack -p 'test_*.py' -v
+      - run: bash hack/check-release-lead-time_test.sh
+      - run: go test ./...
+        working-directory: hack/policy-rule-diff
+      - run: go test ./... -run '^TestValidateTestOutput$'
+        working-directory: acceptance
