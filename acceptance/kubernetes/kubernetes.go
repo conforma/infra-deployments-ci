@@ -108,8 +108,28 @@ func loadPipelineWithBundle(repoRoot, filename, taskBundle string) (*pipeline.Pi
 		return nil, fmt.Errorf("parsing pipeline %s: %w", filename, err)
 	}
 
+	release, err := testenv.LoadRelease()
+	if err != nil {
+		return nil, err
+	}
+	if release != nil {
+		taskBundle = release.Ref("tekton-task")
+	}
 	for i := range pipelineObj.Spec.Tasks {
 		task := &pipelineObj.Spec.Tasks[i]
+		if release != nil && task.Name == "verify" {
+			for name, value := range map[string]string{"EFFECTIVE_TIME": testenv.EffectiveTime, "ALLOW_PAST_EFFECTIVE_TIME": "true"} {
+				task.Params = append(task.Params, pipeline.Param{Name: name, Value: pipeline.ParamValue{Type: pipeline.ParamTypeString, StringVal: value}})
+			}
+			if filename == "conforma-ta.yaml" {
+				for name, value := range map[string]string{"ENABLE_VSA": "true", "ATTESTATION_FORMAT": "predicate", "ociStorage": "local-registry.registry.svc.cluster.local:5000/vsa"} {
+					task.Params = append(task.Params, pipeline.Param{Name: name, Value: pipeline.ParamValue{Type: pipeline.ParamTypeString, StringVal: value}})
+				}
+				for _, name := range []string{"VSA_GENERATED", "sourceDataArtifact"} {
+					pipelineObj.Spec.Results = append(pipelineObj.Spec.Results, pipeline.PipelineResult{Name: name, Value: pipeline.ResultValue{Type: pipeline.ParamTypeString, StringVal: "$(tasks.verify.results." + name + ")"}})
+				}
+			}
+		}
 		if task.TaskRef != nil && task.TaskRef.Resolver == "bundles" {
 			for j := range task.TaskRef.Params {
 				if task.TaskRef.Params[j].Name == "bundle" {
@@ -359,6 +379,17 @@ func createPolicy(ctx context.Context, content *godog.DocString) (context.Contex
 		return ctx, fmt.Errorf("parsing policy spec: %w", err)
 	}
 
+	release, err := testenv.LoadRelease()
+	if err != nil {
+		return ctx, err
+	}
+	if release != nil {
+		policySpec, err = release.PolicyConfig(testenv.RepoRoot(ctx), strings.Contains(content.Content, "@redhat_rpms"))
+		if err != nil {
+			return ctx, err
+		}
+	}
+
 	// Create EnterpriseContractPolicy CR
 	policyName := "test-policy"
 	policy := &unstructured.Unstructured{
@@ -419,6 +450,19 @@ func runPipeline(ctx context.Context, params *godog.Table) (context.Context, err
 	for _, row := range params.Rows {
 		name := row.Cells[0].Value
 		value := row.Cells[1].Value
+
+		if name == "SNAPSHOT" {
+			release, err := testenv.LoadRelease()
+			if err != nil {
+				return ctx, err
+			}
+			if release != nil {
+				value, err = release.Snapshot(value)
+				if err != nil {
+					return ctx, err
+				}
+			}
+		}
 
 		// Expand variables
 		value = strings.ReplaceAll(value, "${NAMESPACE}", state.namespace)
