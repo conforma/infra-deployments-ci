@@ -17,7 +17,7 @@
 
 # Render a prepared release manifest. This command never selects new candidates.
 # Usage: ./hack/generate-changelog.sh releases/<id>/images.json [output-dir|-]
-# Dependencies: release/requirements.txt, crane, gh, jq, yq, go, git, docker.
+# Dependencies: crane, gh, jq, yq, go, git, docker.
 
 set -euo pipefail
 
@@ -26,12 +26,21 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 CANDIDATE_IMAGES_FILE="${1:?Usage: generate-changelog.sh <images.json> [output-dir|-]}"
 CANDIDATE_IMAGES_FILE="$(cd "$(dirname "$CANDIDATE_IMAGES_FILE")" && pwd)/$(basename "$CANDIDATE_IMAGES_FILE")"
-"${SCRIPT_DIR}/release.sh" validate "$CANDIDATE_IMAGES_FILE"
+"${SCRIPT_DIR}/check-release-inputs.sh" "$CANDIDATE_IMAGES_FILE"
 RELEASE_DIR="${2:-$(dirname "$CANDIDATE_IMAGES_FILE")}"
 
 TMPDIR_BASE=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_BASE"' EXIT
-"${SCRIPT_DIR}/release.sh" config "$CANDIDATE_IMAGES_FILE" "${TMPDIR_BASE}/config"
+CONFIG_DIR="${TMPDIR_BASE}/config"
+mkdir -p "$CONFIG_DIR"
+config_commit=$(jq -r '.inputs.testInputs.configCommit' "$CANDIDATE_IMAGES_FILE")
+git -C "$REPO_ROOT" archive "$config_commit" hack/policy-behavior/targets.json hack/policy-behavior/golden-policy.yaml acceptance/pub.key | tar -x -C "$CONFIG_DIR"
+jq --slurpfile manifest "$CANDIDATE_IMAGES_FILE" '.targets |= map(. as $target | .image = ($manifest[0].inputs.testInputs.targets[] | select(.name==$target.name) | .image+"@"+.digest))' \
+    "$CONFIG_DIR/hack/policy-behavior/targets.json" > "$CONFIG_DIR/targets.json"
+POLICY_DATA=$(jq -c '.inputs.testInputs.policyData' "$CANDIDATE_IMAGES_FILE") \
+    yq '.spec.sources[].data = (strenv(POLICY_DATA) | from_json)' "$CONFIG_DIR/hack/policy-behavior/golden-policy.yaml" > "$CONFIG_DIR/policy.yaml"
+jq '. as $m | (.policy[], .components[]) |= (. as $item | .digest = ($m.baseline.images[] | select(.reference==($item.image+":konflux")) | .digest))' \
+    "$CANDIDATE_IMAGES_FILE" > "$CONFIG_DIR/before.json"
 POLICY_BEHAVIOR_FILE="${TMPDIR_BASE}/policy-behavior.md"
 
 # ---------------------------------------------------------------------------
@@ -295,14 +304,36 @@ if [[ "$RELEASE_DIR" != "-" && ! "${RELEASE_DIR}/images.json" -ef "$CANDIDATE_IM
     cp "$CANDIDATE_IMAGES_FILE" "${RELEASE_DIR}/images.json"
 fi
 
-"${SCRIPT_DIR}/release.sh" catalog-changelog "$CANDIDATE_IMAGES_FILE"
+echo
+echo "## Task and StepAction definitions"
+echo
+jq -r '.inputs | (.sourceTaskBundle, .stepActionsBundle) | "- Source bundle: `\(.image)@\(.digest)`"' "$CANDIDATE_IMAGES_FILE"
+bundle=$(candidate_ref quay.io/conforma/tekton-task)
+"${SCRIPT_DIR}/extract-bundle-resources.sh" "$bundle" "$TMPDIR_BASE/catalog" task tasks >&2
+"${SCRIPT_DIR}/extract-bundle-resources.sh" "$bundle" "$TMPDIR_BASE/catalog" stepaction stepactions >&2
+"${SCRIPT_DIR}/check-release-inputs.sh" "$CANDIDATE_IMAGES_FILE" "$TMPDIR_BASE/catalog"
+git init --bare -q "$TMPDIR_BASE/catalog-base"
+base=$(jq -r '.catalog.baseCommit' "$CANDIDATE_IMAGES_FILE")
+git -C "$TMPDIR_BASE/catalog-base" fetch -q --depth=1 https://github.com/conforma/tekton-catalog.git "$base"
+while IFS= read -r file; do
+    path=${file#"$TMPDIR_BASE/catalog/"}
+    echo; echo "### $path"; echo
+    : > "$TMPDIR_BASE/previous.yaml"
+    if [[ -n $(git -C "$TMPDIR_BASE/catalog-base" ls-tree "$base" -- "$path") ]]; then
+        git -C "$TMPDIR_BASE/catalog-base" show "$base:$path" > "$TMPDIR_BASE/previous.yaml"
+    fi
+    echo '
+```diff'
+    diff -u "$TMPDIR_BASE/previous.yaml" "$file" || [[ $? == 1 ]]
+    echo '```'
+done < <(find "$TMPDIR_BASE/catalog" -name '*.yaml' -type f | sort)
 
 echo "" >&2
 echo "Comparing policy behavior..." >&2
 if ! "${SCRIPT_DIR}/policy-behavior/compare-policy-behavior.sh" \
     --report "$POLICY_BEHAVIOR_FILE" \
-    --targets "${TMPDIR_BASE}/config/hack/policy-behavior/targets.json" \
-    --policy-template "${TMPDIR_BASE}/config/hack/policy-behavior/golden-policy.yaml" \
+    --targets "$CONFIG_DIR/targets.json" \
+    --policy-template "$CONFIG_DIR/policy.yaml" \
     --public-key "${TMPDIR_BASE}/config/acceptance/pub.key" \
     --effective-time "$(jq -r '.inputs.testInputs.comparisonTime' "$CANDIDATE_IMAGES_FILE")" \
     "${TMPDIR_BASE}/config/before.json" "$CANDIDATE_IMAGES_FILE" > /dev/null; then

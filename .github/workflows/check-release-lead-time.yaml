@@ -34,6 +34,14 @@ jobs:
             exit 0
           fi
           while IFS= read -r release_dir; do
-            ./hack/release.sh check "$release_dir/images.json"
+            ./hack/check-release-inputs.sh "$release_dir/images.json"
+            bundle=$(jq -r '.components[] | select(.image == "quay.io/conforma/tekton-task") | .image+"@"+.digest' "$release_dir/images.json")
+            tag=$(jq -r '.components[] | select(.image == "quay.io/conforma/tekton-task") | .retentionTag' "$release_dir/images.json")
+            [[ $(crane digest "${bundle%@*}:$tag") == "${bundle##*@}" ]]
+            catalog=$(mktemp -d)
+            ./hack/extract-bundle-resources.sh "$bundle" "$catalog" task tasks
+            ./hack/extract-bundle-resources.sh "$bundle" "$catalog" stepaction stepactions
+            ./hack/check-release-inputs.sh "$release_dir/images.json" "$catalog"
+            rm -rf "$catalog"
             bash ./hack/check-release-lead-time.sh "$release_dir/images.json"
           done <<< "$release_dirs"

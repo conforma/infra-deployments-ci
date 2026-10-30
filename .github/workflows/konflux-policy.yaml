@@ -23,6 +23,8 @@ jobs:
   acceptance:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    outputs:
+      manifest: ${{ steps.release.outputs.manifest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -36,33 +38,49 @@ jobs:
           set -euo pipefail
           go install sigs.k8s.io/kind@v0.33.0
           go install sigs.k8s.io/kustomize/kustomize/v5@v5.2.1
-      - name: Select release manifest
+      - name: Select and check release
+        id: release
         env:
           RELEASE_DIR: ${{ inputs.release_dir }}
           BEFORE_SHA: ${{ github.event.before }}
           AFTER_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          manifest=$(python3 hack/select-release.py)
-          ./hack/release.sh validate "$manifest"
-          mkdir release-input
-          cp "$manifest" release-input/images.json
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+          if [[ -n "$RELEASE_DIR" ]]; then
+            directory=${RELEASE_DIR#releases/}
+            [[ "$directory" =~ ^[A-Za-z0-9][A-Za-z0-9_.:-]*$ ]]
+            manifests=("releases/$directory/images.json")
+          else
+            mapfile -t manifests < <(git diff --name-only --diff-filter=AM "$BEFORE_SHA" "$AFTER_SHA" -- releases/ | grep -E '^releases/[^/]+/images.json$')
+          fi
+          [[ ${#manifests[@]} == 1 ]] || { echo 'Select exactly one release using manual dispatch'; exit 1; }
+          manifest=${manifests[0]}
+          ./hack/check-release-inputs.sh "$manifest"
+          echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
+          echo "config=$(jq -r '.inputs.testInputs.configCommit' "$manifest")" >> "$GITHUB_OUTPUT"
+          echo "RELEASE_IMAGES=$GITHUB_WORKSPACE/$manifest" >> "$GITHUB_ENV"
+          echo "RELEASE_CATALOG=$RUNNER_TEMP/release-catalog" >> "$GITHUB_ENV"
+          bundle=$(jq -r '.components[] | select(.image == "quay.io/conforma/tekton-task") | .image+"@"+.digest' "$manifest")
+          ./hack/extract-bundle-resources.sh "$bundle" "$RUNNER_TEMP/release-catalog" task tasks
+          ./hack/extract-bundle-resources.sh "$bundle" "$RUNNER_TEMP/release-catalog" stepaction stepactions
+          ./hack/check-release-inputs.sh "$manifest" "$RUNNER_TEMP/release-catalog"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          name: release-manifest
-          path: release-input/images.json
-          if-no-files-found: error
+          ref: ${{ steps.release.outputs.config }}
+          path: test-config
+          persist-credentials: false
       - name: Test recorded candidate
-        run: ./hack/release.sh acceptance release-input/images.json acceptance-result
+        env:
+          ACCEPTANCE_REPORT_DIR: ${{ github.workspace }}/acceptance-result/reports
+        run: |
+          set -euo pipefail
+          mkdir -p acceptance-result
+          make -C test-config acceptance 2>&1 | tee acceptance-result/acceptance.log
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
           name: release-acceptance
-          path: |
-            acceptance-result/acceptance.json
-            acceptance-result/*.log
-            acceptance-result/reports/
-            acceptance-result/fixtures/
+          path: acceptance-result/
           if-no-files-found: warn
 
   publish:
@@ -74,14 +92,6 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/release-tools
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: release-manifest
-          path: release-input
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: release-acceptance
-          path: release-evidence
       - name: Catalog token
         id: app-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
@@ -104,24 +114,19 @@ jobs:
           CONFORMA_PASS: ${{ secrets.BUNDLE_PUSH_PASS_CONFORMA }}
           EC_USER: ${{ secrets.BUNDLE_PUSH_USER_EC }}
           EC_PASS: ${{ secrets.BUNDLE_PUSH_PASS_EC }}
-          WORKFLOW_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MANIFEST: ${{ needs.acceptance.outputs.manifest }}
         run: |
           set -euo pipefail
           export REGISTRY_AUTH_FILE="$RUNNER_TEMP/release-auth.json"
           trap 'rm -f "$REGISTRY_AUTH_FILE"' EXIT
-          python3 - <<'PY'
-          import base64, json, os
-          auths = {}
-          for repository, prefix in [('conforma', 'CONFORMA'), ('enterprise-contract', 'EC')]:
-              credential = os.environ[prefix + '_USER'] + ':' + os.environ[prefix + '_PASS']
-              auths['quay.io/' + repository] = {'auth': base64.b64encode(credential.encode()).decode()}
-          with open(os.open(os.environ['REGISTRY_AUTH_FILE'], os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as stream:
-              json.dump({'auths': auths}, stream)
-          PY
-          ./hack/release.sh publish release-input/images.json release-evidence/acceptance.json tekton-catalog publication.json
+          umask 077
+          jq -n '{auths:{"quay.io/conforma":{auth:((env.CONFORMA_USER+":"+env.CONFORMA_PASS)|@base64)},"quay.io/enterprise-contract":{auth:((env.EC_USER+":"+env.EC_PASS)|@base64)}}}' > "$REGISTRY_AUTH_FILE"
+          sudo apt-get update -qq
+          sudo apt-get install -y skopeo
+          ./hack/publish-release.sh "$MANIFEST" tekton-catalog 2>&1 | tee publication.log
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
           name: publication-result
-          path: publication.json
+          path: publication.log
           if-no-files-found: warn

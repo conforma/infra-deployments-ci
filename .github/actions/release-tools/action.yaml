@@ -14,28 +14,16 @@ runs:
         cache-dependency-path: acceptance/go.sum
     - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b
     - shell: bash
-      run: |
-        set -euo pipefail
-        python3 -m venv "$RUNNER_TEMP/release-venv"
-        "$RUNNER_TEMP/release-venv/bin/pip" install -r hack/release/requirements.txt
-        echo "$RUNNER_TEMP/release-venv/bin" >> "$GITHUB_PATH"
+      run: go install github.com/mikefarah/yq/v4@v4.54.1
     - shell: bash
       env:
         READ_AUTH_JSON: ${{ inputs.read-auth }}
       run: |
         set -euo pipefail
         if [[ -n "$READ_AUTH_JSON" ]]; then
-          python3 - <<'PY'
-          import json, os, pathlib
-          config = json.loads(os.environ['READ_AUTH_JSON'])
-          if not isinstance(config.get('auths'), dict):
-              raise SystemExit('Read authentication must be a Docker config with auths')
-          directory = pathlib.Path(os.environ['RUNNER_TEMP']) / 'release-read-auth'
-          directory.mkdir(mode=0o700, exist_ok=True)
-          path = directory / 'config.json'
-          path.write_text(json.dumps(config))
-          path.chmod(0o600)
-          with open(os.environ['GITHUB_ENV'], 'a') as stream:
-              stream.write(f'DOCKER_CONFIG={directory}\nREGISTRY_AUTH_FILE={path}\n')
-          PY
+          umask 077
+          mkdir -p "$RUNNER_TEMP/release-read-auth"
+          jq -e 'select(.auths | type == "object")' <<< "$READ_AUTH_JSON" > "$RUNNER_TEMP/release-read-auth/config.json"
+          echo "DOCKER_CONFIG=$RUNNER_TEMP/release-read-auth" >> "$GITHUB_ENV"
+          echo "REGISTRY_AUTH_FILE=$RUNNER_TEMP/release-read-auth/config.json" >> "$GITHUB_ENV"
         fi

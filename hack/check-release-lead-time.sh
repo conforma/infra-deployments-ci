@@ -41,7 +41,7 @@ for images_file in "$@"; do
     fi
 
     if [[ $(jq -r '.schemaVersion // 1' "$images_file") == 2 ]]; then
-        "${SCRIPT_DIR}/release.sh" validate "$images_file"
+        "${SCRIPT_DIR}/check-release-inputs.sh" "$images_file"
     fi
     echo "Checking new policy rules in $images_file"
     image_rows=$(jq -r '.policy[] | [.image, .digest] | @tsv' "$images_file")

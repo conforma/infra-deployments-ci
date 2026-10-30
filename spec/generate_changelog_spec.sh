@@ -8,24 +8,17 @@ Describe "generate-changelog.sh"
     cp ./hack/policy-behavior/compare-policy-behavior.sh "${TMPDIR}/repo/hack/policy-behavior/"
     export FIXTURE_ROOT="$PWD"
     SCRIPT="${TMPDIR}/repo/hack/generate-changelog.sh"
-    cat > "${TMPDIR}/repo/hack/release.sh" <<'EOF'
+    cat > "${TMPDIR}/repo/hack/check-release-inputs.sh" <<'EOF'
 #!/usr/bin/env bash
-set -euo pipefail
-case "$1" in
-  validate) jq -e '.schemaVersion == 2' "$2" >/dev/null ;;
-  config)
-    mkdir -p "$3/hack/policy-behavior" "$3/acceptance"
-    cp "$FIXTURE_ROOT/acceptance/pub.key" "$3/acceptance/"
-    cp "$FIXTURE_ROOT/hack/policy-behavior/golden-policy.yaml" "$3/hack/policy-behavior/"
-    jq '.targets |= map(.image = (.image | split(":")[0]) + "@sha256:" + ("9" * 64))' "$FIXTURE_ROOT/hack/policy-behavior/targets.json" > "$3/hack/policy-behavior/targets.json"
-    jq '(.policy[], .components[]).digest = "sha256:" + ("8" * 64)' "$2" > "$3/before.json"
-    ;;
-  catalog-changelog) echo '## Task and StepAction definitions' ;;
-  *) exit 1 ;;
-esac
+jq -e '.schemaVersion == 2' "$1" >/dev/null
 EOF
-    chmod +x "${TMPDIR}/repo/hack/release.sh"
-    jq -n '{schemaVersion:2, policy: ["release-policy", "task-policy", "build-task-policy"] | map({image:("quay.io/conforma/" + .),digest:("sha256:" + ("9" * 64))}), components:["cli","tekton-task"] | map({image:("quay.io/conforma/" + .),digest:("sha256:" + ("9" * 64))}),inputs:{testInputs:{comparisonTime:"2026-10-30T00:00:00Z"}}} | .baseline.images = ((.policy + .components) | map({reference:(.image + ":konflux"),digest:("sha256:" + ("8" * 64))}))' > "${TMPDIR}/release/images.json"
+    cat > "${TMPDIR}/repo/hack/extract-bundle-resources.sh" <<'EOF'
+#!/usr/bin/env bash
+mkdir -p "$2/tasks/test/0.1"
+printf 'kind: Task\n' > "$2/tasks/test/0.1/test.yaml"
+EOF
+    chmod +x "${TMPDIR}/repo/hack/"*.sh
+    jq '(.policy[], .components[]).digest = "sha256:" + ("9" * 64) | .baseline.images[].digest = "sha256:" + ("8" * 64)' spec/fixtures/release.json > "${TMPDIR}/release/images.json"
     export CONTAINER_ENGINE="mock-container"
     export MOCK_CONTAINER_MODE=""
     export MOCK_BIN
@@ -55,12 +48,12 @@ EOF
     cat > "${MOCK_BIN}/git" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "${1:-}" == "ls-remote" ]]; then
-  printf '%040d refs/heads/main\n' 4
-else
-  echo "unexpected git command: $*" >&2
-  exit 1
-fi
+if [[ "${1:-}" == -C ]]; then shift 2; fi
+case "$1" in
+  archive) tar -cf - -C "$FIXTURE_ROOT" hack/policy-behavior/targets.json hack/policy-behavior/golden-policy.yaml acceptance/pub.key ;;
+  init|fetch|ls-tree) exit 0 ;;
+  *) echo "unexpected git command: $*" >&2; exit 1 ;;
+esac
 EOF
     chmod +x "${MOCK_BIN}/git"
 
