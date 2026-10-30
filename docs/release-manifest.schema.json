@@ -1,0 +1,317 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Conforma release manifest",
+  "type": "object",
+  "description": "Pinned inputs shared by changelog, acceptance and publication.",
+  "properties": {
+    "schemaVersion": {
+      "const": 2,
+      "description": "Manifest format version."
+    },
+    "policy": {
+      "type": "array",
+      "description": "The three released policies.",
+      "items": {
+        "type": "object",
+        "description": "Candidate policy and its publication mirrors.",
+        "properties": {
+          "image": {
+            "type": "string",
+            "description": "OCI repository without a tag or digest.",
+            "pattern": "^[a-z0-9.-]+(?::[0-9]+)?/[a-z0-9._/-]+$"
+          },
+          "digest": {
+            "type": "string",
+            "description": "Exact OCI content digest.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "mirrors": {
+            "type": "array",
+            "description": "Repositories receiving identical content at :konflux.",
+            "items": {
+              "type": "string",
+              "description": "OCI repository without a tag or digest.",
+              "pattern": "^[a-z0-9.-]+(?::[0-9]+)?/[a-z0-9._/-]+$"
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "image",
+          "digest",
+          "mirrors"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "components": {
+      "type": "array",
+      "description": "Candidate CLI and completed Task bundle.",
+      "items": {
+        "type": "object",
+        "description": "Immutable artifact.",
+        "properties": {
+          "image": {
+            "type": "string",
+            "description": "OCI repository without a tag or digest.",
+            "pattern": "^[a-z0-9.-]+(?::[0-9]+)?/[a-z0-9._/-]+$"
+          },
+          "digest": {
+            "type": "string",
+            "description": "Exact OCI content digest.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "retentionTag": {
+            "type": "string",
+            "description": "Unique tag retaining a prepared bundle; never used for artifact selection.",
+            "pattern": "^candidate-[A-Za-z0-9_.-]+$"
+          }
+        },
+        "required": [
+          "image",
+          "digest"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "inputs": {
+      "type": "object",
+      "description": "Captured preparation and test inputs.",
+      "properties": {
+        "sourceTaskBundle": {
+          "type": "object",
+          "description": "Immutable artifact.",
+          "properties": {
+            "image": {
+              "type": "string",
+              "description": "OCI repository without a tag or digest.",
+              "pattern": "^[a-z0-9.-]+(?::[0-9]+)?/[a-z0-9._/-]+$"
+            },
+            "digest": {
+              "type": "string",
+              "description": "Exact OCI content digest.",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "retentionTag": {
+              "type": "string",
+              "description": "Unique tag retaining a prepared bundle; never used for artifact selection.",
+              "pattern": "^candidate-[A-Za-z0-9_.-]+$"
+            }
+          },
+          "required": [
+            "image",
+            "digest"
+          ],
+          "additionalProperties": false
+        },
+        "stepActionsBundle": {
+          "type": "object",
+          "description": "Immutable artifact.",
+          "properties": {
+            "image": {
+              "type": "string",
+              "description": "OCI repository without a tag or digest.",
+              "pattern": "^[a-z0-9.-]+(?::[0-9]+)?/[a-z0-9._/-]+$"
+            },
+            "digest": {
+              "type": "string",
+              "description": "Exact OCI content digest.",
+              "pattern": "^sha256:[0-9a-f]{64}$"
+            },
+            "retentionTag": {
+              "type": "string",
+              "description": "Unique tag retaining a prepared bundle; never used for artifact selection.",
+              "pattern": "^candidate-[A-Za-z0-9_.-]+$"
+            }
+          },
+          "required": [
+            "image",
+            "digest"
+          ],
+          "additionalProperties": false
+        },
+        "dependencyBundles": {
+          "type": "array",
+          "description": "Optional modified dependency bundles retained for this release.",
+          "items": {
+            "type": "object",
+            "description": "Retained dependency.",
+            "properties": {
+              "image": {
+                "type": "string",
+                "description": "OCI repository without a tag or digest.",
+                "pattern": "^[a-z0-9.-]+(?::[0-9]+)?/[a-z0-9._/-]+$"
+              },
+              "digest": {
+                "type": "string",
+                "description": "Exact OCI content digest.",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "retentionTag": {
+                "type": "string",
+                "description": "Unique tag retaining a prepared bundle; never used for artifact selection.",
+                "pattern": "^candidate-[A-Za-z0-9_.-]+$"
+              }
+            },
+            "required": [
+              "image",
+              "digest",
+              "retentionTag"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "testInputs": {
+          "type": "object",
+          "description": "Inputs shared by baseline comparison, candidate comparison and acceptance.",
+          "properties": {
+            "configCommit": {
+              "type": "string",
+              "description": "Full Git commit ID.",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "targets": {
+              "type": "array",
+              "description": "Golden images used by the suite.",
+              "items": {
+                "type": "object",
+                "description": "Pinned external image to evaluate.",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Scenario identifier."
+                  },
+                  "image": {
+                    "type": "string",
+                    "description": "OCI repository without a tag or digest.",
+                    "pattern": "^[a-z0-9.-]+(?::[0-9]+)?/[a-z0-9._/-]+$"
+                  },
+                  "digest": {
+                    "type": "string",
+                    "description": "Exact OCI content digest.",
+                    "pattern": "^sha256:[0-9a-f]{64}$"
+                  }
+                },
+                "required": [
+                  "name",
+                  "image",
+                  "digest"
+                ],
+                "additionalProperties": false
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "policyData": {
+              "type": "array",
+              "description": "Immutable auxiliary policy data.",
+              "items": {
+                "type": "string",
+                "description": "OCI digest or Git full-commit/path source.",
+                "pattern": "^(oci::[^\\s@]+@sha256:[0-9a-f]{64}|git::[^\\s?]+//[^\\s?]+\\?ref=[0-9a-f]{40})$"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "comparisonTime": {
+              "type": "string",
+              "description": "Shared evaluation time for changelog comparisons.",
+              "format": "date-time"
+            }
+          },
+          "required": [
+            "configCommit",
+            "targets",
+            "policyData",
+            "comparisonTime"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "sourceTaskBundle",
+        "stepActionsBundle",
+        "testInputs"
+      ],
+      "additionalProperties": false
+    },
+    "catalog": {
+      "type": "object",
+      "description": "Catalog publication destination and previous file contents.",
+      "properties": {
+        "repository": {
+          "const": "conforma/tekton-catalog",
+          "description": "Destination GitHub repository."
+        },
+        "branch": {
+          "const": "konflux",
+          "description": "Destination branch."
+        },
+        "baseCommit": {
+          "type": "string",
+          "description": "Full Git commit ID.",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      },
+      "required": [
+        "repository",
+        "branch",
+        "baseCommit"
+      ],
+      "additionalProperties": false
+    },
+    "baseline": {
+      "type": "object",
+      "description": "Expected previous publication state.",
+      "properties": {
+        "images": {
+          "type": "array",
+          "description": "All eight destination tag baselines.",
+          "items": {
+            "type": "object",
+            "description": "Previous tag value.",
+            "properties": {
+              "reference": {
+                "type": "string",
+                "description": "Full destination reference including :konflux.",
+                "pattern": "^quay\\.io/[^\\s@:]+:konflux$"
+              },
+              "digest": {
+                "type": "string",
+                "description": "Exact OCI content digest.",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "reference",
+              "digest"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "images"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "policy",
+    "components",
+    "inputs",
+    "catalog",
+    "baseline"
+  ],
+  "additionalProperties": false
+}
