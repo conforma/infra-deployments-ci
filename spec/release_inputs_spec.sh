@@ -9,6 +9,13 @@ Describe 'Release inputs'
     The stderr should include 'invalid release manifest'
   End
 
+  It 'rejects additional publication destinations'
+    jq '.components[0].mirrors=["quay.io/conforma/unexpected"] | .baseline.images += [{reference:"quay.io/conforma/unexpected:konflux",digest:.components[0].digest}]' spec/fixtures/release.json > "$TMPDIR/images.json"
+    When run script ./hack/check-release-inputs.sh "$TMPDIR/images.json"
+    The status should be failure
+    The stderr should include 'invalid release manifest'
+  End
+
   It 'accepts a completed manifest'
     When run script ./hack/check-release-inputs.sh spec/fixtures/release.json
     The status should be success

@@ -18,7 +18,7 @@ jq -e '
   ([.policy[].image] | sort) == ($policies | keys | sort) and
   all(.policy[]; artifact and .mirrors == [$policies[.image]]) and
   ([.components[].image] | sort) == ["quay.io/conforma/cli", "quay.io/conforma/tekton-task"] and
-  all(.components[]; artifact) and
+  all(.components[]; artifact and .mirrors == null) and
   (.components[] | select(.image == "quay.io/conforma/tekton-task") | .retentionTag | test("^candidate-[A-Za-z0-9_.-]+$")) and
   (.inputs.sourceTaskBundle | artifact and .image == "quay.io/conforma/tekton-task") and
   (.inputs.stepActionsBundle | artifact and .image == "quay.io/conforma/step-actions") and
