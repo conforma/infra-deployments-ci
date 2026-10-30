@@ -1,6 +1,6 @@
 # Conforma release workflow design
 
-Status: proposal. `RELEASE_WORKFLOW.md` documents the current implementation.
+Status: implemented in this branch. `RELEASE_WORKFLOW.md` is the operator guide.
 
 ## Release contract
 
