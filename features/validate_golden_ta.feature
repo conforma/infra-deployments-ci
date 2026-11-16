@@ -1,10 +1,10 @@
 Feature: Validate Golden Container/RPM with Trusted Artifacts
-  Validate that the latest CLI and release policies work correctly
+  Validate that the retained CLI and candidate release policy work correctly
   against the golden container image and golden RPM using the Trusted Artifacts task.
 
   Background:
     Given a cluster running
-    And the conforma-ta pipeline using task bundle "quay.io/conforma/tekton-task:latest"
+    And the conforma-ta pipeline using task bundle "quay.io/conforma/tekton-task@sha256:e2ac3444a229ce1688c96692ba2af166656be9313ac5cba750cac1c7daf3371d"
 
   Scenario: Pipeline runs to completion with golden container and @redhat collection using trusted artifacts
     Given a working namespace
@@ -13,7 +13,7 @@ Feature: Validate Golden Container/RPM with Trusted Artifacts
       {
         "sources": [
           {
-            "policy": ["oci::quay.io/conforma/release-policy:latest"],
+            "policy": ["oci::quay.io/conforma/release-policy@sha256:c5f849046794ca55c52f5d84b88e53858b299b759fa8a4827f6911dead422315"],
             "data": [
               "git::github.com/release-engineering/rhtap-ec-policy//data",
               "oci::quay.io/konflux-ci/tekton-catalog/data-acceptable-bundles:latest"
@@ -40,7 +40,7 @@ Feature: Validate Golden Container/RPM with Trusted Artifacts
       {
         "sources": [
           {
-            "policy": ["oci::quay.io/conforma/release-policy:latest"],
+            "policy": ["oci::quay.io/conforma/release-policy@sha256:c5f849046794ca55c52f5d84b88e53858b299b759fa8a4827f6911dead422315"],
             "data": [
               "git::github.com/release-engineering/rhtap-ec-policy//data",
               "oci::quay.io/konflux-ci/tekton-catalog/data-acceptable-bundles:latest"

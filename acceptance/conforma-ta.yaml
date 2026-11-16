@@ -91,6 +91,8 @@ spec:
           value: snapshot.json
         - name: POLICY_CONFIGURATION
           value: "$(params.POLICY_CONFIGURATION)"
+        - name: POLICY_BUNDLE_DIGEST
+          value: sha256:c5f849046794ca55c52f5d84b88e53858b299b759fa8a4827f6911dead422315
         - name: PUBLIC_KEY
           value: "$(params.PUBLIC_KEY)"
         - name: SSL_CERT_DIR
@@ -111,7 +113,7 @@ spec:
         resolver: bundles
         params:
           - name: bundle
-            value: quay.io/conforma/tekton-task:latest
+            value: quay.io/conforma/tekton-task@sha256:e2ac3444a229ce1688c96692ba2af166656be9313ac5cba750cac1c7daf3371d
           - name: name
             value: verify-conforma-konflux-ta
           - name: kind
