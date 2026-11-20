@@ -190,8 +190,13 @@ For example, the manifest in #261 listed [`a0cb6fc…`][manifest-cli] as the can
 
 **What to do:**
 
-1. **Inventory first.** Pause downstream pin updates and coordinate with other release operators. Compare completed jobs, destination tags, the catalog SHA and any consumer pins already changed. If you can finish the release with the intended inputs, select only the missing outputs and repeat the publication checks. If you choose rollback, continue below.
-2. **Select a known-good release.** Use its full handoff or recover the policy digests from its manifest, the published CLI digest from its successful tag-job log, and the rebuilt bundle from its bundle-job log and run tag. **Do not dispatch an old `release_dir` as a rollback**; it resolves current bundle inputs again.
+1. **Inventory first.** Pause downstream pin updates and coordinate with other release operators. Compare completed jobs, destination tags, the catalog SHA and any consumer pins already changed.
+
+   If the bundle reached Quay and only `tekton-catalog` failed, check that the original run still has the `task-definitions` artifact used to build that bundle and that no newer release has superseded this one. If either check fails, keep downstream pins on hold and coordinate a new full publication or rollback. Otherwise, rerun **only [`tekton-catalog`][catalog-artifact] in the original run**. Before handing off, compare the tasks and StepActions it publishes with those in the bundle at its recorded digest.
+
+   **Caution:** Do not start a new catalog-only dispatch to finish an earlier release. Even with the same `release_dir`, a new run resolves the task bundle, policy and StepActions again. The catalog can then differ from the bundle already on Quay.
+
+2. **For rollback, select a known-good release.** Use its full handoff or recover the policy digests from its manifest, the published CLI digest from its successful tag-job log, and the rebuilt bundle from its bundle-job log and run tag. **Do not dispatch an old `release_dir` as a rollback**; it resolves current bundle inputs again.
 3. **Restore registry tags with approved access.** For each policy, set `IMAGE` and `DIGEST` from the known-good manifest. Run the copy once with `DEST` set to the primary repository and once for each listed mirror. For the CLI, use its repository and its actual published digest.
 
    ```bash
@@ -225,6 +230,7 @@ For example, the manifest in #261 listed [`a0cb6fc…`][manifest-cli] as the can
 [manifest-policy]: https://github.com/conforma/infra-deployments-ci/blob/f22b8608f4e15649c249e9dfa4362e2dc18a894f/releases/2026-11-02T10%3A22%3A39/images.json#L5
 [task-policy-default]: https://github.com/conforma/tekton-catalog/blob/ffb55a37e4963fc6d051239aca35841342098689/tasks/verify-enterprise-contract/0.1/verify-enterprise-contract.yaml#L114
 [example-bundle-step]: https://github.com/conforma/infra-deployments-ci/blob/f22b8608f4e15649c249e9dfa4362e2dc18a894f/.github/workflows/konflux-policy.yaml#L268-L271
+[catalog-artifact]: https://github.com/conforma/infra-deployments-ci/blob/e2e4a9ac553cf94e96c6a624ad6b45c5f4dfdc28/.github/workflows/konflux-policy.yaml#L279-L283
 [pipeline-revision]: https://github.com/konflux-ci/release-service-catalog/blob/b895c71e57258f2870674a105a1f2c0b6ad1e564/pipelines/managed/calunga-push-npm-to-pulp/calunga-push-npm-to-pulp.yaml#L263-L264
 [renovate-pr]: https://github.com/konflux-ci/build-definitions/pull/3379
 [build-pr]: https://github.com/konflux-ci/build-definitions/pull/3379/files
