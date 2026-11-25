@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 2,
+  "policy": [
+    {
+      "image": "quay.io/conforma/release-policy",
+      "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "mirrors": ["quay.io/enterprise-contract/ec-release-policy"]
+    },
+    {
+      "image": "quay.io/conforma/task-policy",
+      "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "mirrors": ["quay.io/enterprise-contract/ec-task-policy"]
+    },
+    {
+      "image": "quay.io/conforma/build-task-policy",
+      "digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "mirrors": ["quay.io/enterprise-contract/ec-build_task-policy"]
+    }
+  ],
+  "components": [
+    {
+      "image": "quay.io/conforma/cli",
+      "digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    {
+      "image": "quay.io/conforma/tekton-task",
+      "digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+      "retentionTag": "candidate-20261125090000"
+    }
+  ],
+  "inputs": {
+    "sourceTaskBundle": {
+      "image": "quay.io/conforma/tekton-task",
+      "digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666"
+    },
+    "stepActionsBundle": {
+      "image": "quay.io/conforma/step-actions",
+      "digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+    }
+  }
+}
