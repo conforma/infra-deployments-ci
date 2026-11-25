@@ -5,15 +5,24 @@ Keep infra-deployments updated with the latest Enterprise Contract components.
 For the complete release process from changelog generation through image and
 Tekton task publication, see [the release workflow guide](docs/RELEASE_WORKFLOW.md).
 
-## Generate a policy behavior changelog
+## Prepare a release and generate its changelog
 
-`hack/generate-changelog.sh` retains its existing release flow: it compares
-the current `:konflux` images with the candidate `:latest` images, writes
-`changelog.md` and `images.json` to the requested release directory, and now
-also appends a `Policy Behavior Changes` section to the changelog. That section
-validates the Golden container and Golden RPM targets four times in total.
-Policy behavior differences are informational; failed image pulls, invalid
-policy configuration, command failures, and malformed reports return an error.
+Release preparation and changelog generation are separate steps.
+`hack/prepare-release.sh <new-release-directory>` pins every release input
+once: the three policies, the CLI, the source task bundle and the StepAction
+bundle are resolved to digests, the task definitions are extracted and pinned
+(CLI image, `POLICY_BUNDLE_DIGEST`, Git-resolver StepAction revisions), and
+the assembled candidate task bundle is pushed under a unique `candidate-*`
+retention tag. The result is a v2 `images.json` that acceptance testing and
+publication both consume as the single source of truth.
+
+`hack/generate-changelog.sh <images.json> [output-dir|-]` renders the
+changelog from that manifest. It never re-resolves a candidate: every digest
+it prints comes from `images.json`, and it appends a `Policy Behavior
+Changes` section to the changelog. That section validates the Golden container
+and Golden RPM targets four times in total. Policy behavior differences are
+informational; failed image pulls, invalid policy configuration, command
+failures, and malformed reports return an error.
 
 The target images, display names, and policy collections are defined in
 [`hack/policy-behavior/targets.json`](hack/policy-behavior/targets.json).
@@ -29,9 +38,12 @@ The workflow requires:
 - Bash, Docker or Podman, and `CONTAINER_ENGINE` when the engine is not Docker;
 - `crane` for resolving immutable image digests;
 - `jq` for JSON processing;
-- `yq` for rendering the per-run EnterpriseContractPolicy;
+- `yq` for rendering the per-run EnterpriseContractPolicy and pinning task
+  definitions;
 - Git for source revision lookups;
-- Go for the policy rule diff helper; and
+- Go for the policy rule diff helper;
+- `tkn` and push credentials for `quay.io/conforma` to push the candidate
+  task bundle during preparation; and
 - GitHub CLI (`gh`) for changelog pull-request titles.
 
 The container engine must be running and able to pull from Quay. Anonymous
@@ -57,35 +69,41 @@ export REGISTRY_AUTH_FILE="$HOME/.docker/config.json"
 
 ### Release output and comparison inputs
 
-The existing image, source-commit, and policy-rule sections continue comparing
-`:konflux` with `:latest`. The generated `images.json` records the candidate
-digests exactly as before. The behavior comparison then uses the current
+The changelog's image, source-commit, and policy-rule sections compare the
+current `:konflux` images with the candidate digests recorded in the
+manifest. `images.json` is written by `prepare-release.sh`; the changelog
+generator only reads it. The behavior comparison then uses the current
 `:konflux` CLI and release policy together with the candidate CLI and policy
-digests from that generated file. The release files are created before the
-behavior comparison, so they remain available for review if that final step
-reports an operational error.
+digests from that manifest. The changelog is written before the behavior
+comparison, so it remains available for review if that final step reports an
+operational error.
 
 The comparison uses:
 
 - the current `quay.io/conforma/cli:konflux` and
   `oci::quay.io/conforma/release-policy:konflux` references;
-- the exact candidate CLI and policy digests from the generated `images.json`;
+- the exact candidate CLI and policy digests from the prepared `images.json`;
 - digest-pinned Golden container and Golden RPM images resolved during the
   comparison;
 - the policy data configured by `hack/policy-behavior/golden-policy.yaml`; and
 - a rendered policy file whose `spec.sources[0].policy` matches the release and
   whose `spec.sources[0].config.include` matches the target image.
 
-Run the generator from the repository root:
+Run both steps from the repository root:
 
 ```bash
-./hack/generate-changelog.sh
-./hack/generate-changelog.sh releases/my-candidate
-./hack/generate-changelog.sh -
+./hack/prepare-release.sh releases/my-candidate
+./hack/generate-changelog.sh releases/my-candidate/images.json
 ```
 
-The final form writes the changelog to stdout and does not publish
-`images.json`. For a direct behavior comparison, provide a generated candidate
+The changelog can also be written to stdout or to another directory:
+
+```bash
+./hack/generate-changelog.sh releases/my-candidate/images.json -
+./hack/generate-changelog.sh releases/my-candidate/images.json path/output/
+```
+
+For a direct behavior comparison, provide a prepared candidate
 manifest:
 
 ```bash
@@ -114,6 +132,7 @@ Run the shell syntax checks and the ShellSpec suite from the repository root:
 
 ```bash
 bash -n hack/generate-changelog.sh
+bash -n hack/prepare-release.sh
 bash -n hack/policy-behavior/compare-policy-behavior.sh
 shellspec
 ```
