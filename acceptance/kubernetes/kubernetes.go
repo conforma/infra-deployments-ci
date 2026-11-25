@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -61,6 +62,44 @@ func (t testState) Key() any {
 type pipelineKey struct{}
 type tasksKey struct{}
 
+// policyRefPattern matches a mutable policy reference such as
+// oci::quay.io/conforma/release-policy:latest.
+var policyRefPattern = regexp.MustCompile(`^oci::(quay\.io/conforma/[^:@]+):[^@]+$`)
+
+// pinPolicySources rewrites mutable policy references of the form
+// oci::quay.io/conforma/<name>:<tag> to the digest-pinned references
+// recorded in the release manifest. References the manifest has no entry
+// for are left untouched.
+func pinPolicySources(policySpec map[string]interface{}, release *testenv.Release) {
+	sources, ok := policySpec["sources"].([]interface{})
+	if !ok {
+		return
+	}
+	for _, source := range sources {
+		sourceMap, ok := source.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		refs, ok := sourceMap["policy"].([]interface{})
+		if !ok {
+			continue
+		}
+		for i, ref := range refs {
+			name, ok := ref.(string)
+			if !ok {
+				continue
+			}
+			match := policyRefPattern.FindStringSubmatch(name)
+			if match == nil {
+				continue
+			}
+			if pinned := release.Ref(strings.TrimPrefix(match[1], "quay.io/conforma/")); pinned != "" {
+				refs[i] = "oci::" + pinned
+			}
+		}
+	}
+}
+
 // AddStepsTo adds cluster-related steps to the scenario context
 func AddStepsTo(sc *godog.ScenarioContext) {
 	// Cluster setup
@@ -96,7 +135,10 @@ func startCluster(ctx context.Context) (context.Context, error) {
 }
 
 // loadPipelineWithBundle reads a pipeline YAML file and updates any bundle
-// resolver taskRefs to use the given task bundle.
+// resolver taskRefs to use the given task bundle. When a release manifest
+// is loaded (RELEASE_IMAGES), the bundle recorded in the manifest replaces
+// the given one, so acceptance tests the exact bundle that will be
+// published.
 func loadPipelineWithBundle(repoRoot, filename, taskBundle string) (*pipeline.Pipeline, error) {
 	pipelineYaml, err := os.ReadFile(filepath.Join(repoRoot, "acceptance", filename))
 	if err != nil {
@@ -106,6 +148,14 @@ func loadPipelineWithBundle(repoRoot, filename, taskBundle string) (*pipeline.Pi
 	var pipelineObj pipeline.Pipeline
 	if err := yaml.Unmarshal(pipelineYaml, &pipelineObj); err != nil {
 		return nil, fmt.Errorf("parsing pipeline %s: %w", filename, err)
+	}
+
+	release, err := testenv.LoadRelease()
+	if err != nil {
+		return nil, err
+	}
+	if release != nil {
+		taskBundle = release.Ref("tekton-task")
 	}
 
 	for i := range pipelineObj.Spec.Tasks {
@@ -332,6 +382,16 @@ func createPolicy(ctx context.Context, content *godog.DocString) (context.Contex
 	var policySpec map[string]interface{}
 	if err := json.Unmarshal([]byte(content.Content), &policySpec); err != nil {
 		return ctx, fmt.Errorf("parsing policy spec: %w", err)
+	}
+
+	// Pin the policy sources to the manifest digests so acceptance tests
+	// the exact policies that will be published.
+	release, err := testenv.LoadRelease()
+	if err != nil {
+		return ctx, err
+	}
+	if release != nil {
+		pinPolicySources(policySpec, release)
 	}
 
 	// Create EnterpriseContractPolicy CR
