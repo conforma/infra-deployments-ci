@@ -136,6 +136,13 @@ spec:
       The stderr should include "POLICY_BUNDLE_DIGEST"
     End
 
+    It "rejects a POLICY_BUNDLE_DIGEST param with an empty default"
+      write_catalog_task "${VALID_TASK/sha256:1111111111111111111111111111111111111111111111111111111111111111/}"
+      When run script "$SCRIPT" "$FIXTURE" "${TMPDIR}/catalog"
+      The status should be failure
+      The stderr should include "POLICY_BUNDLE_DIGEST"
+    End
+
     It "rejects a mutable StepAction revision"
       write_catalog_task "${VALID_TASK/value: abcdef1234567890abcdef1234567890abcdef12/value: development}"
       When run script "$SCRIPT" "$FIXTURE" "${TMPDIR}/catalog"

@@ -92,15 +92,21 @@ while IFS= read -r file; do
         fi
     done < <(yq -r '.. | select(has("image")) | .image' "$file")
 
-    # The policy default baked into the task definitions must be the digest
-    # the manifest says will be promoted.
+    # The policy default baked into the task definitions must be the
+    # digest the manifest says will be promoted. An empty or missing
+    # default means the digest was never baked in and the task would
+    # fall back to a mutable policy ref. (No `// ""` in the yq query:
+    # yq's alternative operator emits a value even when nothing
+    # matched, which would flag files that never declare the param.)
     while IFS= read -r value; do
-        [ -z "$value" ] && continue
-        if [ "$value" != "$POLICY_DIGEST" ]; then
+        if [ -z "$value" ] || [ "$value" = "null" ]; then
+            echo "ERROR: POLICY_BUNDLE_DIGEST in ${file} has no default digest" >&2
+            STATUS=1
+        elif [ "$value" != "$POLICY_DIGEST" ]; then
             echo "ERROR: POLICY_BUNDLE_DIGEST in ${file} does not match the manifest: ${value}" >&2
             STATUS=1
         fi
-    done < <(yq -r '.spec.params[]? | select(.name == "POLICY_BUNDLE_DIGEST") | .default // ""' "$file")
+    done < <(yq -r '.spec.params[]? | select(.name == "POLICY_BUNDLE_DIGEST") | .default' "$file")
 
     # Git-resolver StepAction revisions must be full commit SHAs.
     while IFS= read -r revision; do
