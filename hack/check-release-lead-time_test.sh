@@ -81,4 +81,23 @@ if [[ -s "$MOCK_GO_LOG" ]]; then
     exit 1
 fi
 
+# A v2 manifest must pass check-release-inputs.sh before its rules are
+# checked; a manifest missing required fields must be rejected up front.
+jq '. + {schemaVersion: 2}' "$TEST_DIR/images.json" > "$TEST_DIR/v2-invalid.json"
+if bash "$SCRIPT_DIR/check-release-lead-time.sh" "$TEST_DIR/v2-invalid.json" > /dev/null 2>&1; then
+    echo "ERROR: CI helper accepted an invalid v2 release manifest" >&2
+    exit 1
+fi
+if [[ -s "$MOCK_GO_LOG" ]]; then
+    echo "ERROR: CI helper checked rules from an invalid v2 manifest" >&2
+    exit 1
+fi
+
+cp "$(cd "$SCRIPT_DIR/.." && pwd)/spec/fixtures/release.json" "$TEST_DIR/v2-valid.json"
+bash "$SCRIPT_DIR/check-release-lead-time.sh" "$TEST_DIR/v2-valid.json" > /dev/null
+if ! grep -q 'quay.io/conforma/release-policy:konflux quay.io/conforma/release-policy@sha256:1111' "$MOCK_GO_LOG"; then
+    echo "ERROR: CI helper did not check the v2 manifest policy rules" >&2
+    exit 1
+fi
+
 echo "Release lead-time CI helper tests passed"
