@@ -12,9 +12,9 @@ Merging the proposal starts publication. The two consumer paths are independent:
 
 ```text
 Release PR merges to main in conforma/infra-deployments-ci
-  -> konflux-policy: run acceptance tests, tag CLI and policies, prepare tasks
+  -> konflux-policy: run acceptance tests on the manifest digests, tag CLI and policies
       |
-      +-- Quay: tag the rebuilt task bundle :konflux
+      +-- Quay: tag the tested task bundle :konflux
       |   -> new integration run loads the pipeline from conforma/tekton-catalog on main
       |   -> compare the bundle digest its tasks resolved with the published digest
       |
@@ -40,25 +40,39 @@ Release PR merges to main in conforma/infra-deployments-ci
 
 ### 1. Prepare and merge one release proposal
 
-1. **Generate the proposal.** From the root of `conforma/infra-deployments-ci`, with the [generator tools and registry access][setup] in place, run:
+1. **Prepare the release.** From the root of `conforma/infra-deployments-ci`, with the [generator tools and registry access][setup] in place, run:
 
    ```bash
-   ./hack/generate-changelog.sh
+   ./hack/prepare-release.sh releases/<new-directory>
    ```
 
-2. **Review `changelog.md`** in the new `releases/<UTC-timestamp>/` directory. Check the source PRs, added and removed rules, affected collections and effective dates. Read the behavior report: it compares the current CLI and policy with the candidate pair using the same Golden container and RPM image digests and evaluation time. Account for any change in warnings or violations in the proposal.
-3. **Review `images.json`.** Match its candidate digests to the changelog and check each policy's mirror destinations. The `policy` entries select the images to promote. The `components` entries record the CLI and bundle candidates seen during generation.
-4. **Open and merge the release PR.** Include both files in **one new release directory** in a PR to `main`, as in [#261][proposal]. Confirm the [lead-time check][lead-time] and required reviews pass, then merge one release directory per push.
+   Preparation pins every release input once and assembles the final task
+   bundle before anything is tested: the policies, CLI, source task bundle
+   and StepAction bundle are resolved to digests, the extracted task
+   definitions are pinned (CLI image, `POLICY_BUNDLE_DIGEST`, Git-resolver
+   StepAction revisions), and the assembled bundle is pushed to Quay under a
+   unique `candidate-*` retention tag. Push credentials for
+   `quay.io/conforma` are required for this step. `images.json` records the
+   pushed bundle digest, so the manifest, not a later rebuild, identifies
+   what will be published.
+
+2. **Generate the changelog.** Render the proposal from the manifest:
+
+   ```bash
+   ./hack/generate-changelog.sh releases/<new-directory>/images.json
+   ```
+
+3. **Review `changelog.md`** in the new `releases/<UTC-timestamp>/` directory. Check the source PRs, added and removed rules, affected collections and effective dates. Read the behavior report: it compares the current CLI and policy with the candidate pair using the same Golden container and RPM image digests and evaluation time. Account for any change in warnings or violations in the proposal.
+4. **Review `images.json`.** Match its candidate digests to the changelog and check each policy's mirror destinations. The `policy` entries select the images to promote. The `components` entries record the CLI candidate and the assembled task bundle digest with its `candidate-*` retention tag. The `inputs` entries record the source task and StepAction bundles the candidate was assembled from.
+5. **Open and merge the release PR.** Include both files in **one new release directory** in a PR to `main`, as in [#261][proposal]. Confirm the [lead-time check][lead-time] and required reviews pass, then merge one release directory per push.
 
    **Note:** Each newly added rule needs an RFC 3339 `effective_on` [at least 56 days][lead-time-window] after the lead-time check runs. Existing rules are exempt.
 
 ### 2. Verify publication and record what shipped
 
-**Do this for every full release.** Record two values the proposal cannot supply: the digest of the **rebuilt task bundle** for integration, and the **task-catalog commit** for managed releases. Capture them while the tags and branch still identify this run. Record the CLI and policy digests alongside them so a workload owner can later check what ran, or recover a known-good version.
+**Do this for every full release.** The manifest already names the task bundle digest and its `candidate-*` retention tag, so the values below are confirmed rather than discovered. Record the task-catalog commit for managed releases, and the CLI and policy digests so a workload owner can later check what ran, or recover a known-good version.
 
-For example, the manifest in #261 listed [`a0cb6fc…`][manifest-cli] as the candidate CLI digest. The task published by that run uses [`975ec70…`][task-cli] for its CLI image. The workflow takes the CLI from the input task bundle; copying the candidate digest into the handoff would have sent reviewers looking for the wrong image.
-
-1. **Confirm the full release completed.** Open the [`konflux-policy` run][publish] for the merge, as in [run 41855742425][example-run]. In `acceptance-tests`, check the `Using releases/.../images.json` line and that `make acceptance` passed. Confirm all four publication jobs below also succeeded.
+1. **Confirm the full release completed.** Open the [`konflux-policy` run][publish] for the merge, as in [run 41855742425][example-run]. In `acceptance-tests`, check the `Using releases/.../images.json` line, the `Release manifest OK` line from `check-release-inputs.sh`, and that `make acceptance` passed. Confirm all four publication jobs below also succeeded.
 
    **Stop if the full release is incomplete.** Publication writes to Quay and Git separately. Once the bundle tag moves, new integration runs can use the bundle even if the catalog push fails. Hold the handoff and [check which destinations changed](#partial-publication-or-rollback) before retrying. If you deliberately ran acceptance only, record the test result and end here.
 
@@ -66,10 +80,10 @@ For example, the manifest in #261 listed [`a0cb6fc…`][manifest-cli] as the can
 
    | What to collect | Where to find it and what to compare |
    | --- | --- |
-   | **Rebuilt task bundle** | In `tekton-task-bundle`, find the `run-<UTC-date>-<run-id>-<attempt>` tag printed by the [bundle publication step][example-bundle-step]. Record that tag and its digest; `quay.io/conforma/tekton-task:konflux` must resolve to the same digest for this release. |
+   | **Task bundle** | In `tekton-task-bundle`, find the digest printed by the [bundle publication step][example-bundle-step]. It is the `components` entry for `quay.io/conforma/tekton-task` in `images.json`, kept reachable by its `candidate-*` retention tag. `quay.io/conforma/tekton-task:konflux` must resolve to the same digest for this release. |
    | **Task-catalog commit** | In `tekton-catalog`, find the commit pushed to `conforma/tekton-catalog` on `konflux`. Record its full SHA, or the existing revision if the job reported no file changes. The [example commit `ffb55a3`][example-commit] shows the updated tasks, the added StepAction and a link back to the run. |
-   | **CLI image** | In `acceptance-tests` → **Resolve tested image digests**, find the CLI read from the input bundle. In `tag` → **Tag tested images by digest**, check that `quay.io/conforma/cli:konflux` resolves to that digest. |
-   | **Policy images and mirrors** | Match each destination in `tag` → **Tag policy images** to its `policy` entry in `images.json`. In the `task-definitions` artifact from `update-task-definitions`, check that `POLICY_BUNDLE_DIGEST` defaults to the promoted release-policy digest and that the StepActions from `quay.io/conforma/step-actions:snapshot` are present. In #261, `507e458…` appears in both the [release-policy entry][manifest-policy] and the [published task default][task-policy-default]. |
+   | **CLI image** | The `components` entry for `quay.io/conforma/cli` in `images.json`. In `tag` → **Tag CLI image from manifest**, check that `quay.io/conforma/cli:konflux` resolves to that digest. The same digest is baked into the tested bundle's task definitions, so the changelog, manifest and published image agree. |
+   | **Policy images and mirrors** | Match each destination in `tag` → **Tag policy images** to its `policy` entry in `images.json`. In the `task-definitions` artifact from `extract-task-definitions`, check that the `POLICY_BUNDLE_DIGEST` defaults and the StepActions match the bundle at its recorded digest; both are extracted from that bundle, which was validated at preparation. |
 
 3. **Hand off the record.** Once all destinations agree, share the release PR, release directory, run URL and full values above with workload owners and Release Service maintainers. For example, [Release Service PR #2722][managed-pr] pinned the [full SHA of `ffb55a3`][pipeline-revision] in its pipeline files. Confirmation that a workload actually ran those versions comes in step 5.
 
@@ -112,7 +126,7 @@ For example, the manifest in #261 listed [`a0cb6fc…`][manifest-cli] as the can
 
 1. **Select a new `PipelineRun` with the workload owner.** For integration, choose one that started after the bundle tag moved. For a managed release, choose one after the relevant environment promotion and check the pipeline repository, path and revision selected by `ReleasePlanAdmission.spec.pipeline.pipelineRef`.
 2. **Record the resolved pipeline Git commit.** Then check the tasks against the publication record:
-   - **Integration:** Check the `TaskRun` provenance for both pipeline tasks, `collect-keyless-params` and `verify`. Each resolved bundle digest should match the rebuilt bundle digest from step 2. The pipeline commit alone cannot identify a bundle fetched by tag.
+   - **Integration:** Check the `TaskRun` provenance for both pipeline tasks, `collect-keyless-params` and `verify`. Each resolved bundle digest should match the task bundle digest from step 2. The pipeline commit alone cannot identify a bundle fetched by tag.
    - **Managed release:** Compare the verification task's resolved Git commit with the task-catalog SHA from step 2.
 3. **Record what the verification task ran.** Check its CLI image digest, effective policy reference and digest, and validation result. Link the run evidence to the publication record and, for managed releases, the catalog PR and promotion run or hotfix PR. Report adoption for the workload and environment you verified.
 
@@ -122,17 +136,17 @@ For example, the manifest in #261 listed [`a0cb6fc…`][manifest-cli] as the can
 
 ### Preparing or publishing
 
-#### The generator wrote release files but the behavior report is missing or incomplete
+#### The changelog was written but the behavior report is missing or incomplete
 
-**Why this happens:** `generate-changelog.sh` writes `changelog.md` and `images.json` before it finishes comparing the Golden container and RPM images. Both files can exist after a failed pull or validation command.
+**Why this happens:** `generate-changelog.sh` writes `changelog.md` before it finishes comparing the Golden container and RPM images. The file can exist after a failed pull or validation command.
 
-**What to do:** Check the generator's exit status and first error. For a pull error, confirm the container engine can read both Golden images; set `REGISTRY_AUTH_FILE` to a Docker-compatible auth file if needed. Fix the reported error, regenerate the proposal and check that both Golden comparisons completed before opening the PR.
+**What to do:** Check the generator's exit status and first error. For a pull error, confirm the container engine can read both Golden images; set `REGISTRY_AUTH_FILE` to a Docker-compatible auth file if needed. Fix the reported error, re-render the changelog and check that both Golden comparisons completed before opening the PR. The manifest is not affected: it is written by `prepare-release.sh` and the generator never modifies it.
 
 #### The changelog and `images.json` give different digests for the same candidate
 
-**Why this happens:** The generator looks up `:latest` more than once. If the tag moves during generation, the changelog can describe a different image from the one in the manifest.
+**Why this happens:** The manifest was edited by hand after preparation, or the changelog was rendered from a different manifest than the one in the release directory.
 
-**What to do:** Compare the full digests for the same repository in both files. Regenerate them together and review the new behavior report. Editing one digest by hand leaves the comparison tied to the old inputs.
+**What to do:** Compare the full digests for the same repository in both files. Never edit a digest by hand: re-run `prepare-release.sh` into a fresh directory and re-render the changelog from its manifest, so the changelog, manifest and published tags all name the same digests by construction.
 
 #### CI rejects a new rule's effective date
 
@@ -150,11 +164,11 @@ For example, the manifest in #261 listed [`a0cb6fc…`][manifest-cli] as the can
 
 **Why this needs care:** Manual dispatch uses an existing proposal, but all three publication switches default to `true`. Leaving them enabled publishes images and catalog files after acceptance.
 
-**What to do:** Select the intended `release_dir`. Set `run_tag`, `run_tekton_task_bundle` and `run_tekton_catalog` **all to `false`** for acceptance only. For a deliberately partial run, enable only the outputs you intend to publish. If you publish tasks with `run_tag=false`, their policy default comes from the **existing** `release-policy:konflux` tag.
+**What to do:** Select the intended `release_dir`. Set `run_tag`, `run_tekton_task_bundle` and `run_tekton_catalog` **all to `false`** for acceptance only. For a deliberately partial run, enable only the outputs you intend to publish. Every publication job consumes the manifest, so a partial run promotes the same digests a full run would; nothing is rebuilt or re-resolved after acceptance.
 
 #### Acceptance passed but the Golden reports contain violations
 
-**Why this happens:** The scenarios use `STRICT=false`: success means the pipelines completed. They resolve `:latest` references, and the workflow rebuilds the final bundle after acceptance.
+**Why this happens:** The scenarios use `STRICT=false`: success means the pipelines completed. Workflow runs resolve the manifest's bundle, policy and CLI digests; local developer runs without `RELEASE_IMAGES` keep resolving `:latest`.
 
 **What to do:** Use the proposal's behavior report to review changes in policy findings. For questions about which versions shipped, use the publication record; for what a workload evaluated, inspect its Conforma `TaskRun` in step 5.
 
@@ -194,18 +208,18 @@ For example, the manifest in #261 listed [`a0cb6fc…`][manifest-cli] as the can
 
 1. **Inventory first.** Pause downstream pin updates and coordinate with other release operators. Compare completed jobs, destination tags, the catalog SHA and any consumer pins already changed. Pausing pin updates does not stop integration runs from using `:konflux`. If the bundle tag moved, ask workload owners to check which runs resolved the new digest.
 
-   If the bundle reached Quay and only `tekton-catalog` failed, check that the original run still has the `task-definitions` artifact used to build that bundle and that no newer release has superseded this one. If either check fails, keep downstream pins on hold and coordinate a new full publication or rollback. Otherwise, rerun **only [`tekton-catalog`][catalog-artifact] in the original run**. Before handing off, compare the tasks and StepActions it publishes with those in the bundle at its recorded digest.
+   If the bundle reached Quay and only `tekton-catalog` failed, check that the original run still has the `task-definitions` artifact and that no newer release has superseded this one. If either check fails, keep downstream pins on hold and coordinate a new full publication or rollback. Otherwise, rerun **only [`tekton-catalog`][catalog-artifact] in the original run**. Before handing off, compare the tasks and StepActions it publishes with those in the bundle at its recorded digest.
 
-   **Caution:** Do not start a new catalog-only dispatch to finish an earlier release. Even with the same `release_dir`, a new run resolves the task bundle, policy and StepActions again. The catalog can then differ from the bundle already on Quay.
+   **Caution:** Prefer rerunning the failed job in the original run over a new catalog-only dispatch. A new dispatch with the same `release_dir` extracts the same manifest bundle digest, so the catalog it publishes matches the bundle on Quay, but the concurrency group makes it wait for any run already in flight and it re-runs acceptance first.
 
-2. **For rollback, select a known-good release.** Use its full handoff or recover the policy digests from its manifest, the published CLI digest from its successful tag-job log, and the rebuilt bundle from its bundle-job log and run tag. **Do not dispatch an old `release_dir` as a rollback**; it resolves current bundle inputs again.
+2. **For rollback, select a known-good release.** Use its full handoff or its manifest: the policy digests, the CLI digest and the task bundle digest with its `candidate-*` retention tag are all recorded there. A dispatch of an old `release_dir` is now a valid rollback for the registry destinations, because every publication job promotes the digests recorded in that manifest; check the catalog commit separately, since the catalog branch may have moved since that release.
 3. **Restore registry tags with approved access.** For each policy, set `IMAGE` and `DIGEST` from the known-good manifest. Run the copy once with `DEST` set to the primary repository and once for each listed mirror. For the CLI, use its repository and its actual published digest.
 
    ```bash
    skopeo copy --all "docker://${IMAGE}@${DIGEST}" "docker://${DEST}:konflux"
    ```
 
-   For the rebuilt task bundle, set `BUNDLE_DIGEST` to the verified previous `sha256:...` digest. The old run tag is not required:
+   For the task bundle, set `BUNDLE_DIGEST` to the verified previous `sha256:...` digest from the known-good manifest. The `candidate-*` retention tag is not required:
 
    ```bash
    crane tag "quay.io/conforma/tekton-task@${BUNDLE_DIGEST}" konflux
@@ -229,10 +243,6 @@ For example, the manifest in #261 listed [`a0cb6fc…`][manifest-cli] as the can
 [integration-verify]: https://github.com/conforma/tekton-catalog/blob/cda80addb3a687c52fe5d08fba67061db20933bd/pipelines/enterprise-contract/0.1/enterprise-contract.yaml#L163-L169
 [catalog-sync-pr]: https://github.com/conforma/tekton-catalog/pull/286/files
 [managed-pipeline]: https://github.com/konflux-ci/release-service-catalog/blob/b895c71e57258f2870674a105a1f2c0b6ad1e564/pipelines/managed/calunga-push-npm-to-pulp/calunga-push-npm-to-pulp.yaml#L257-L267
-[manifest-cli]: https://github.com/conforma/infra-deployments-ci/blob/f22b8608f4e15649c249e9dfa4362e2dc18a894f/releases/2026-11-02T10%3A22%3A39/images.json#L27-L28
-[task-cli]: https://github.com/conforma/tekton-catalog/blob/ffb55a37e4963fc6d051239aca35841342098689/tasks/verify-enterprise-contract/0.1/verify-enterprise-contract.yaml#L280-L282
-[manifest-policy]: https://github.com/conforma/infra-deployments-ci/blob/f22b8608f4e15649c249e9dfa4362e2dc18a894f/releases/2026-11-02T10%3A22%3A39/images.json#L5
-[task-policy-default]: https://github.com/conforma/tekton-catalog/blob/ffb55a37e4963fc6d051239aca35841342098689/tasks/verify-enterprise-contract/0.1/verify-enterprise-contract.yaml#L114
 [example-bundle-step]: https://github.com/conforma/infra-deployments-ci/blob/f22b8608f4e15649c249e9dfa4362e2dc18a894f/.github/workflows/konflux-policy.yaml#L268-L271
 [catalog-artifact]: https://github.com/conforma/infra-deployments-ci/blob/e2e4a9ac553cf94e96c6a624ad6b45c5f4dfdc28/.github/workflows/konflux-policy.yaml#L279-L283
 [pipeline-revision]: https://github.com/konflux-ci/release-service-catalog/blob/b895c71e57258f2870674a105a1f2c0b6ad1e564/pipelines/managed/calunga-push-npm-to-pulp/calunga-push-npm-to-pulp.yaml#L263-L264

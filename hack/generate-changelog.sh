@@ -15,38 +15,39 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Generates a release changelog comparing :latest (to be promoted) against
-# :konflux (current production) for all Conforma images.
-#
-# By default creates a release directory at releases/<YYYY-MM-DDTHH:MM:SS>/
-# containing changelog.md and images.json (machine-readable image inputs
-# for the release workflow).
-#
-# Pass a directory argument to write elsewhere, or "-" to write the
-# changelog to stdout (images.json is skipped in this mode).
+# Renders the changelog for a prepared release manifest. Every candidate
+# digest printed comes from images.json, so the changelog, the manifest and
+# the promoted tags all name the same digests by construction. The manifest
+# is not modified and no candidate is re-resolved.
 #
 # Usage:
-#   ./hack/generate-changelog.sh                  # → releases/2026-06-30T14:30:00/
-#   ./hack/generate-changelog.sh path/output/     # → path/output/
-#   ./hack/generate-changelog.sh -                # → stdout (changelog only)
+#   ./hack/generate-changelog.sh releases/<id>/images.json [output-dir|-]
+#
+# With no output directory the changelog is written next to the manifest.
+# Pass "-" to write it to stdout.
 #
 # Dependencies:
 #   crane, gh, jq, go, git
 #
 # Output:
-#   <release-dir>/changelog.md  — human-readable release notes
-#   <release-dir>/images.json   — machine-readable image list for the workflow
+#   <output-dir>/changelog.md  — human-readable release notes
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-RELEASE_DIR="${1:-${REPO_ROOT}/releases/$(date -u +%Y-%m-%dT%H:%M:%S)}"
+CANDIDATE_IMAGES_FILE="${1:?Usage: generate-changelog.sh <images.json> [output-dir|-]}"
+if [ ! -f "$CANDIDATE_IMAGES_FILE" ]; then
+    echo "ERROR: release manifest not found: ${CANDIDATE_IMAGES_FILE}" >&2
+    exit 1
+fi
+CANDIDATE_IMAGES_FILE="$(cd "$(dirname "$CANDIDATE_IMAGES_FILE")" && pwd)/$(basename "$CANDIDATE_IMAGES_FILE")"
+"${SCRIPT_DIR}/check-release-inputs.sh" "$CANDIDATE_IMAGES_FILE" > /dev/null
+RELEASE_DIR="${2:-$(dirname "$CANDIDATE_IMAGES_FILE")}"
 
 TMPDIR_BASE=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_BASE"' EXIT
-CANDIDATE_IMAGES_FILE="${TMPDIR_BASE}/images.json"
 POLICY_BEHAVIOR_FILE="${TMPDIR_BASE}/policy-behavior.md"
 
 # ---------------------------------------------------------------------------
@@ -54,8 +55,8 @@ POLICY_BEHAVIOR_FILE="${TMPDIR_BASE}/policy-behavior.md"
 # ---------------------------------------------------------------------------
 
 # Policy images and their enterprise-contract mirrors. Each entry is
-# "conforma_repo|ec_mirror_repo". The mirror list ends up in images.json
-# so the release workflow can tag both namespaces.
+# "conforma_repo|ec_mirror_repo". The manifest lists the mirrors so the
+# release workflow can tag both namespaces.
 POLICY_IMAGE_ENTRIES=(
     "quay.io/conforma/release-policy|quay.io/enterprise-contract/ec-release-policy"
     "quay.io/conforma/task-policy|quay.io/enterprise-contract/ec-task-policy"
@@ -160,7 +161,7 @@ render_rule_diff() {
     diff_json=$(cd "${REPO_ROOT}/hack/policy-rule-diff" && go run . \
         -bundle -json \
         -doc-base-url "https://conforma.dev/docs/policy/packages" \
-        "${image}:konflux" "${image}:latest" 2>/dev/null)
+        "${image}:konflux" "$(candidate_ref "$image")" 2>/dev/null)
 
     local added removed
     added=$(echo "$diff_json" | jq '.added | length')
@@ -203,41 +204,12 @@ render_rule_diff() {
     fi
 }
 
-write_candidate_images() {
-    local output_file="$1"
-    local images_json='{"policy":[],"components":[]}'
-    local entry image mirror digest
-
-    for entry in "${POLICY_IMAGE_ENTRIES[@]}"; do
-        IFS='|' read -r image mirror <<< "$entry"
-        echo "  resolving ${image}:latest..." >&2
-        if ! digest=$(crane digest "${image}:latest" 2>/dev/null); then
-            echo "ERROR: Failed to resolve ${image}:latest" >&2
-            return 1
-        fi
-        if [[ ! "$digest" =~ ^sha256:[0-9a-fA-F]{64}$ ]]; then
-            echo "ERROR: crane returned an invalid digest for ${image}:latest: ${digest}" >&2
-            return 1
-        fi
-        images_json=$(jq --arg img "$image" --arg dig "$digest" --arg mir "$mirror" \
-            '.policy += [{"image": $img, "digest": $dig, "mirrors": [$mir]}]' <<< "$images_json")
-    done
-
-    for image in "${COMPONENT_IMAGES[@]}"; do
-        echo "  resolving ${image}:latest..." >&2
-        if ! digest=$(crane digest "${image}:latest" 2>/dev/null); then
-            echo "ERROR: Failed to resolve ${image}:latest" >&2
-            return 1
-        fi
-        if [[ ! "$digest" =~ ^sha256:[0-9a-fA-F]{64}$ ]]; then
-            echo "ERROR: crane returned an invalid digest for ${image}:latest: ${digest}" >&2
-            return 1
-        fi
-        images_json=$(jq --arg img "$image" --arg dig "$digest" \
-            '.components += [{"image": $img, "digest": $dig}]' <<< "$images_json")
-    done
-
-    echo "$images_json" | jq . > "$output_file"
+# candidate_ref prints the digest-pinned reference for an image as
+# recorded in the release manifest.
+candidate_ref() {
+    jq -er --arg image "$1" \
+        '(.policy + .components)[] | select(.image == $image) | "\(.image)@\(.digest)"' \
+        "$CANDIDATE_IMAGES_FILE"
 }
 
 # ---------------------------------------------------------------------------
@@ -261,8 +233,8 @@ echo "## Images"
 echo ""
 
 for image in "${ALL_IMAGES[@]}"; do
-    echo "  resolving ${image}:latest..." >&2
-    digest=$(crane digest "${image}:latest" 2>/dev/null)
+    echo "  reading recorded ${image}..." >&2
+    digest=$(candidate_ref "$image")
     local_name="${image##*/}"
     echo "- **${local_name}** — \`${digest}\`"
 done
@@ -280,7 +252,7 @@ for entry in "${COMMIT_LOG_SOURCES[@]}"; do
 
     echo "  fetching revisions..." >&2
     konflux_rev=$(get_revision "${image_repo}:konflux")
-    latest_rev=$(get_revision "${image_repo}:latest")
+    latest_rev=$(get_revision "$(candidate_ref "$image_repo")")
 
     echo "  konflux: ${konflux_rev}" >&2
     echo "  latest:  ${latest_rev}" >&2
@@ -335,14 +307,8 @@ fi
 
 echo "" >&2
 
-if [[ "$RELEASE_DIR" != "-" ]]; then
-    echo "Writing images.json..." >&2
-    CANDIDATE_IMAGES_FILE="${RELEASE_DIR}/images.json"
-fi
-
-write_candidate_images "$CANDIDATE_IMAGES_FILE"
-
 echo "" >&2
+
 echo "Comparing policy behavior..." >&2
 if ! "${SCRIPT_DIR}/policy-behavior/compare-policy-behavior.sh" \
     --report "$POLICY_BEHAVIOR_FILE" \

@@ -40,6 +40,10 @@ for images_file in "$@"; do
         exit 1
     fi
 
+    if [[ $(jq -r '.schemaVersion // 1' "$images_file") == 2 ]]; then
+        "${SCRIPT_DIR}/check-release-inputs.sh" "$images_file" > /dev/null
+    fi
+
     echo "Checking new policy rules in $images_file"
     image_rows=$(jq -r '.policy[] | [.image, .digest] | @tsv' "$images_file")
     while IFS=$'\t' read -r image digest; do

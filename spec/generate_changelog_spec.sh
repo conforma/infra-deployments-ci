@@ -1,5 +1,6 @@
 Describe "generate-changelog.sh"
   SCRIPT="./hack/generate-changelog.sh"
+  FIXTURE="spec/fixtures/release.json"
 
   setup() {
     setup_tmpdir
@@ -7,12 +8,22 @@ Describe "generate-changelog.sh"
     export MOCK_CONTAINER_MODE=""
     export MOCK_BIN
     export GO_LOG="${TMPDIR}/go.log"
+    export CRANE_LOG="${TMPDIR}/crane.log"
+
+    # The manifest under test. The changelog is written next to it.
+    cp "$FIXTURE" "${TMPDIR}/images.json"
 
     cat > "${MOCK_BIN}/crane" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${1:-}" in
   digest)
+    printf 'crane digest %s\n' "$2" >> "$CRANE_LOG"
+    if [[ "$2" =~ ^quay\.io/conforma/.+:latest$ ]]; then
+      # Candidate images must come from the manifest, never from :latest.
+      echo "mock crane: refused to resolve mutable candidate ref: $2" >&2
+      exit 1
+    fi
     printf 'sha256:%064d\n' 9
     ;;
   manifest)
@@ -73,24 +84,62 @@ EOF
   Before "setup"
   After "cleanup"
 
-  It "publishes candidate images and the behavior section after success"
-    When run script "$SCRIPT" "${TMPDIR}/release"
+  It "renders the changelog from the manifest without rewriting it"
+    When run script "$SCRIPT" "${TMPDIR}/images.json"
     The status should be success
-    The path "${TMPDIR}/release/images.json" should be file
-    The path "${TMPDIR}/release/changelog.md" should be file
-    The contents of file "${TMPDIR}/release/images.json" should include "sha256:0000000000000000000000000000000000000000000000000000000000000009"
-    The contents of file "${TMPDIR}/release/changelog.md" should include "Policy Behavior Changes"
-    The contents of file "${GO_LOG}" should include "quay.io/conforma/release-policy:konflux quay.io/conforma/release-policy:latest"
-    The stderr should include "Release written to"
+    The path "${TMPDIR}/changelog.md" should be file
+    The contents of file "${TMPDIR}/changelog.md" should include "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    The contents of file "${TMPDIR}/changelog.md" should include "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+    The contents of file "${TMPDIR}/changelog.md" should include "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+    The contents of file "${TMPDIR}/changelog.md" should include "Policy Behavior Changes"
+    The stderr should include "Done."
   End
 
-  It "keeps the generated release artifacts when policy comparison fails"
-    export MOCK_CONTAINER_MODE="fail"
-    When run script "$SCRIPT" "${TMPDIR}/failed-release"
+  It "does not write or modify images.json"
+    cp "${TMPDIR}/images.json" "${TMPDIR}/images.json.orig"
+    When run script "$SCRIPT" "${TMPDIR}/images.json"
+    The status should be success
+    The stderr should include "Done."
+    diff -u "${TMPDIR}/images.json.orig" "${TMPDIR}/images.json"
+  End
+
+  It "never resolves a mutable candidate reference"
+    When run script "$SCRIPT" "${TMPDIR}/images.json"
+    The status should be success
+    The stderr should include "Done."
+    The contents of file "${CRANE_LOG}" should not include "quay.io/conforma/cli:latest"
+    The contents of file "${CRANE_LOG}" should not include "quay.io/conforma/tekton-task:latest"
+    The contents of file "${CRANE_LOG}" should not include "quay.io/conforma/release-policy:latest"
+  End
+
+  It "compares rules against the manifest candidate digests"
+    When run script "$SCRIPT" "${TMPDIR}/images.json"
+    The status should be success
+    The stderr should include "Done."
+    The contents of file "${GO_LOG}" should include "quay.io/conforma/release-policy:konflux quay.io/conforma/release-policy@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+  End
+
+  It "writes the changelog to stdout with an output dir of -"
+    When run script "$SCRIPT" "${TMPDIR}/images.json" -
+    The status should be success
+    The output should include "Policy Behavior Changes"
+    The stderr should include "Done."
+    The path "${TMPDIR}/changelog.md" should not be file
+  End
+
+  It "rejects an invalid manifest"
+    jq 'del(.components[1].retentionTag)' "${TMPDIR}/images.json" > "${TMPDIR}/invalid.json"
+    When run script "$SCRIPT" "${TMPDIR}/invalid.json"
     The status should be failure
-    The path "${TMPDIR}/failed-release/images.json" should be file
-    The path "${TMPDIR}/failed-release/changelog.md" should be file
-    The contents of file "${TMPDIR}/failed-release/changelog.md" should include "Policy Rule Changes"
+    The stderr should include "invalid release manifest"
+  End
+
+  It "keeps the changelog when the behavior comparison fails"
+    export MOCK_CONTAINER_MODE="fail"
+    When run script "$SCRIPT" "${TMPDIR}/images.json"
+    The status should be failure
+    The path "${TMPDIR}/changelog.md" should be file
+    The contents of file "${TMPDIR}/changelog.md" should include "Policy Rule Changes"
     The stderr should include "Policy behavior comparison failed"
   End
 End
