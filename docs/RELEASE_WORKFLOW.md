@@ -4,7 +4,7 @@
 
 A Conforma release updates the tools Konflux uses to verify application images. An [integration pipeline][integration-verify] can check a team's images after a build, and a [managed release pipeline][managed-pipeline] can check the same images again before they ship. In both cases, a Tekton task runs the Conforma command-line tool (CLI) against the policy configured for that workload.
 
-**The default integration test follows a bundle tag. Managed releases pin a Git commit.** The [publication workflow][publish-code] publishes CLI and policy images to Quay and delivers the task definitions as both a Quay bundle and YAML files in Git. As soon as the workflow [moves the bundle's `:konflux` tag][example-bundle-step], a new integration run can use the release. The digest identifies the exact bundle that ran. A managed release of the same application keeps using the previous task commit until the new pin reaches its environment.
+**The default integration test follows a bundle tag. Managed releases pin a Git commit.** The [publication workflow][publish-code] publishes CLI and policy images to Quay and delivers the task definitions as both a Quay bundle and YAML files in Git. As soon as the workflow [moves the bundle's `:konflux` tag][example-bundle-step], a new integration run can use the release. The digest identifies the exact bundle that ran. Managed releases adopt the new task commit separately, so the two pipelines can check the same snapshot with different Conforma versions.
 
 ## Lifecycle Flow
 
@@ -32,7 +32,7 @@ Release PR merges to main in conforma/infra-deployments-ci
 | --- | --- |
 | Conforma release engineer | Prepares the proposal, verifies publication and records the bundle digest, image digests and task-catalog commit. Shares that record with workload owners and prepares the managed catalog update. |
 | Conforma reviewers | Review the rule changes and decide whether new warnings or violations are expected. The [lead-time check on #261][lead-example] illustrates the automated part: CI checks effective dates for new rules. |
-| Conforma catalog maintainers | Review changes to the integration pipeline on `main`, such as [the sync from `conforma/cli` in #286][catalog-sync-pr]. |
+| Conforma catalog maintainers | Review sync PRs from `conforma/cli`, including changes to the integration pipeline on catalog `main`. |
 | Release Service maintainers | Review the task-commit update on `development`. They decide when to run [Promote branch][promote] for staging or production, and whether an urgent change needs a hotfix. |
 | Tenant or workload owner | Identifies a new integration or release run. With Conforma, checks the task, CLI, effective policy and validation result for that workload. |
 
@@ -79,8 +79,11 @@ For example, the manifest in #261 listed [`a0cb6fc…`][manifest-cli] as the can
 
 **Integration tests (`conforma/tekton-catalog`)**
 
-1. **Check the workload's `IntegrationTestScenario` (ITS).** Its `spec.resolverRef` selects the pipeline. The [Konflux UI default][its-default] uses the Git resolver to load `pipelines/enterprise-contract/0.1/enterprise-contract.yaml` from `conforma/tekton-catalog` on `main`.
-2. **Ask the workload owner for the next integration run after publication.** The pipeline resolves both [`collect-keyless-params`][integration-collect] and [`verify-enterprise-contract`][integration-verify] from `quay.io/conforma/tekton-task:konflux`. A new bundle needs no pipeline edit or Renovate PR. [Compare the run's resolved digests with the published bundle digest](#5-confirm-adoption-per-consumer).
+1. **Check the workload's `IntegrationTestScenario` (ITS).** Its `spec.resolverRef` tells Konflux which integration pipeline to run. The [Konflux UI default][its-default] uses the Git resolver to load `pipelines/enterprise-contract/0.1/enterprise-contract.yaml` from `conforma/tekton-catalog` on `main`.
+2. **If you're reviewing a catalog sync to `main`, check which files changed.**
+   - **Only files under `tasks/`:** [Catalog PR #309][catalog-task-sync] set the CLI image in three tasks to [`975ec70…`][task-cli], the digest release #261 later published. Merging #309 did not roll out those tasks: the default ITS loads them from Quay.
+   - **The selected pipeline YAML:** The earlier [catalog PR #286][catalog-sync-pr] changed the pipeline's [`WORKERS` default][pipeline-workers] from `1` to `2`. A new run following `main` can pick up that change without a Conforma release.
+3. **Ask the workload owner for the next integration run after publication.** The pipeline resolves both [`collect-keyless-params`][integration-collect] and [`verify-enterprise-contract`][integration-verify] from `quay.io/conforma/tekton-task:konflux`. Once [publication moves the tag][example-bundle-step], a production ITS using this default can pick up the new bundle without a catalog PR or separate staging promotion. [Compare the run's resolved digests with the published bundle digest](#5-confirm-adoption-per-consumer).
 
    **Note (legacy):** [Renovate PR #3379][build-pr] updated bundle pins in the [deprecated `build-definitions` pipeline][legacy-pipeline] alongside a CLI pin for that repository's own CI.
 
@@ -227,7 +230,9 @@ For example, the manifest in #261 listed [`a0cb6fc…`][manifest-cli] as the can
 [its-default]: https://github.com/konflux-ci/konflux-ui/blob/81fbbd6ff61d5ea621f6553b0126a8baa2c14dd9/src/components/IntegrationTests/IntegrationTestForm/const.ts#L1-L3
 [integration-collect]: https://github.com/conforma/tekton-catalog/blob/cda80addb3a687c52fe5d08fba67061db20933bd/pipelines/enterprise-contract/0.1/enterprise-contract.yaml#L109-L115
 [integration-verify]: https://github.com/conforma/tekton-catalog/blob/cda80addb3a687c52fe5d08fba67061db20933bd/pipelines/enterprise-contract/0.1/enterprise-contract.yaml#L163-L169
+[catalog-task-sync]: https://github.com/conforma/tekton-catalog/pull/309/files
 [catalog-sync-pr]: https://github.com/conforma/tekton-catalog/pull/286/files
+[pipeline-workers]: https://github.com/conforma/tekton-catalog/blob/2bb8884d1be8426f790f3b03014c6ee9f0e67461/pipelines/enterprise-contract/0.1/enterprise-contract.yaml#L66-L69
 [managed-pipeline]: https://github.com/konflux-ci/release-service-catalog/blob/b895c71e57258f2870674a105a1f2c0b6ad1e564/pipelines/managed/calunga-push-npm-to-pulp/calunga-push-npm-to-pulp.yaml#L257-L267
 [manifest-cli]: https://github.com/conforma/infra-deployments-ci/blob/f22b8608f4e15649c249e9dfa4362e2dc18a894f/releases/2026-11-02T10%3A22%3A39/images.json#L27-L28
 [task-cli]: https://github.com/conforma/tekton-catalog/blob/ffb55a37e4963fc6d051239aca35841342098689/tasks/verify-enterprise-contract/0.1/verify-enterprise-contract.yaml#L280-L282
